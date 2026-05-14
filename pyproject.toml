@@ -1,0 +1,20 @@
+[project]
+name = "th2etl"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "thaink2", email = "farid.azouaou@thaink2.com" }
+]
+requires-python = ">=3.10"
+dependencies = [
+    "psycopg[binary]>=3.1,<4.0",
+    "pydantic-settings>=2.14.1",
+]
+
+[project.scripts]
+th2etl = "th2etl.runner:main"
+
+[build-system]
+requires = ["uv_build>=0.8.14,<0.9.0"]
+build-backend = "uv_build"
