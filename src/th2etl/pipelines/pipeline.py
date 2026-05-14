@@ -2,12 +2,48 @@ from __future__ import annotations
 
 import logging
 from collections import deque
-from typing import Any, Sequence
+from typing import Any, Callable, Sequence
 
 from ..blocs import ExporterBloc, LoaderBloc, TransformerBloc
 from ..blocs.base import Bloc
+from th2etl.storage import DatabaseStorage
 
 logger = logging.getLogger(__name__)
+
+BlocFactory = Callable[[str, dict[str, Any], Sequence[str] | None], Bloc]
+BLOC_FACTORY_REGISTRY: dict[str, BlocFactory] = {}
+
+
+def register_bloc_factory(bloc_type: str, factory: BlocFactory) -> None:
+    BLOC_FACTORY_REGISTRY[bloc_type] = factory
+
+
+def build_bloc_from_record(name: str, bloc_type: str, dependencies: Sequence[str] | None, config: dict[str, Any] | None) -> Bloc:
+    factory = BLOC_FACTORY_REGISTRY.get(bloc_type)
+    if factory is None:
+        raise ValueError(f"No registered bloc factory for bloc_type={bloc_type!r}")
+    return factory(name, config or {}, dependencies)
+
+
+def build_pipeline_from_database(storage: DatabaseStorage, pipeline_name: str) -> "Pipeline":
+    pipeline_record = storage.get_pipeline(pipeline_name)
+    if pipeline_record is None:
+        raise ValueError(f"Pipeline {pipeline_name!r} does not exist")
+
+    blocs: list[Bloc] = []
+    for bloc_name in pipeline_record.bloc_names:
+        bloc_record = storage.get_bloc(bloc_name)
+        if bloc_record is None:
+            raise ValueError(f"Bloc {bloc_name!r} referenced by pipeline {pipeline_name!r} does not exist")
+        bloc = build_bloc_from_record(
+            bloc_record.name,
+            bloc_record.bloc_type,
+            bloc_record.dependencies,
+            bloc_record.config,
+        )
+        blocs.append(bloc)
+
+    return Pipeline(blocs)
 
 
 class Pipeline:
@@ -61,8 +97,9 @@ class Pipeline:
 
 
 class ExampleLoader(LoaderBloc):
-    def __init__(self) -> None:
-        super().__init__(name="example_loader")
+    def __init__(self, name: str = "example_loader", dependencies: Sequence[str] | None = None, config: dict[str, Any] | None = None) -> None:
+        super().__init__(name=name, dependencies=dependencies)
+        self.config = config or {}
 
     def execute(self, context: dict[str, Any]) -> None:
         logger.info("Loading rows")
@@ -74,8 +111,9 @@ class ExampleLoader(LoaderBloc):
 
 
 class ExampleTransformer(TransformerBloc):
-    def __init__(self) -> None:
-        super().__init__(name="example_transformer", dependencies=["example_loader"])
+    def __init__(self, name: str = "example_transformer", dependencies: Sequence[str] | None = None, config: dict[str, Any] | None = None) -> None:
+        super().__init__(name=name, dependencies=dependencies)
+        self.config = config or {}
 
     def execute(self, context: dict[str, Any]) -> None:
         raw_rows = context.get("raw_rows", [])
@@ -86,8 +124,9 @@ class ExampleTransformer(TransformerBloc):
 
 
 class ExampleExporter(ExporterBloc):
-    def __init__(self) -> None:
-        super().__init__(name="example_exporter", dependencies=["example_transformer"])
+    def __init__(self, name: str = "example_exporter", dependencies: Sequence[str] | None = None, config: dict[str, Any] | None = None) -> None:
+        super().__init__(name=name, dependencies=dependencies)
+        self.config = config or {}
 
     def execute(self, context: dict[str, Any]) -> None:
         exported_rows = context.get("transformed_rows", [])
@@ -95,6 +134,23 @@ class ExampleExporter(ExporterBloc):
         for row in exported_rows:
             logger.info("Exported row: %s", row)
         context["exported_count"] = len(exported_rows)
+
+
+def _example_loader_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
+    return ExampleLoader(name=name, dependencies=dependencies, config=config)
+
+
+def _example_transformer_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
+    return ExampleTransformer(name=name, dependencies=dependencies, config=config)
+
+
+def _example_exporter_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
+    return ExampleExporter(name=name, dependencies=dependencies, config=config)
+
+
+register_bloc_factory("example_loader", _example_loader_factory)
+register_bloc_factory("example_transformer", _example_transformer_factory)
+register_bloc_factory("example_exporter", _example_exporter_factory)
 
 
 def build_example_pipeline() -> Pipeline:

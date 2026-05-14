@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import logging
 import time
+from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta
-from typing import Iterable
+from typing import Iterable, Sequence
 
-from th2etl.pipelines.pipeline import Pipeline
+from th2etl.pipelines.pipeline import Pipeline, build_pipeline_from_database
+from th2etl.storage import DatabaseStorage
 
 logger = logging.getLogger(__name__)
 
@@ -91,9 +93,10 @@ class CronScheduler:
         self._next_run = self.trigger.next_run(datetime.now())
 
     def run_once(self) -> None:
-        logger.info("Running scheduled pipeline %s at %s", self.name, datetime.now())
+        start_at = datetime.now()
+        logger.info("Running scheduled pipeline %s at %s", self.name, start_at)
         self.pipeline.execute()
-        self._next_run = self.trigger.next_run(datetime.now())
+        self._next_run = self.trigger.next_run(start_at + timedelta(minutes=1))
 
     def run_pending(self) -> bool:
         now = datetime.now().replace(second=0, microsecond=0)
@@ -101,6 +104,13 @@ class CronScheduler:
             self.run_once()
             return True
         return False
+
+    def schedule_next_run(self, after: datetime | None = None) -> None:
+        base = (after or datetime.now()).replace(second=0, microsecond=0) + timedelta(minutes=1)
+        self._next_run = self.trigger.next_run(base)
+
+    def next_run(self) -> datetime:
+        return self._next_run
 
     def start(self, interval_seconds: int = 30) -> None:
         logger.info("Starting scheduler %s with next run at %s", self.name, self._next_run)
@@ -111,6 +121,82 @@ class CronScheduler:
                 time.sleep(interval_seconds)
         except KeyboardInterrupt:
             logger.info("Scheduler %s stopped by keyboard interrupt", self.name)
+
+
+class SchedulerManager:
+    def __init__(self, schedulers: Sequence[CronScheduler] | None = None, max_workers: int = 5, check_interval_seconds: int = 30) -> None:
+        self.schedulers: list[CronScheduler] = list(schedulers or [])
+        self.check_interval_seconds = check_interval_seconds
+        self.executor = ThreadPoolExecutor(max_workers=max_workers)
+
+    def add_scheduler(self, scheduler: CronScheduler) -> None:
+        self.schedulers.append(scheduler)
+
+    def run_pending(self) -> list[Future[None]]:
+        now = datetime.now().replace(second=0, microsecond=0)
+        futures: list[Future[None]] = []
+        for scheduler in self.schedulers:
+            if scheduler.next_run() <= now:
+                logger.info("Dispatching scheduled pipeline %s for execution", scheduler.name)
+                scheduler.schedule_next_run(now)
+                futures.append(self.executor.submit(scheduler.run_once))
+        return futures
+
+    def start(self) -> None:
+        logger.info("Starting SchedulerManager with %d pipelines", len(self.schedulers))
+        try:
+            while True:
+                futures = self.run_pending()
+                if futures:
+                    logger.info("Dispatched %d scheduled pipeline(s)", len(futures))
+                time.sleep(self.check_interval_seconds)
+        except KeyboardInterrupt:
+            logger.info("SchedulerManager stopped by keyboard interrupt")
+        finally:
+            self.executor.shutdown(wait=True)
+
+
+def load_scheduler_manager(
+    storage: DatabaseStorage,
+    scheduler_names: Sequence[str] | None = None,
+    max_workers: int = 5,
+    check_interval_seconds: int = 30,
+) -> SchedulerManager:
+    manager = SchedulerManager(max_workers=max_workers, check_interval_seconds=check_interval_seconds)
+    for scheduler in storage.list_schedulers():
+        if scheduler_names and scheduler.name not in scheduler_names:
+            continue
+
+        trigger_record = storage.get_trigger(scheduler.trigger_name)
+        if trigger_record is None:
+            raise ValueError(f"Trigger {scheduler.trigger_name!r} referenced by scheduler {scheduler.name!r} does not exist")
+
+        pipeline = build_pipeline_from_database(storage, scheduler.pipeline_name)
+        manager.add_scheduler(
+            CronScheduler(
+                pipeline=pipeline,
+                trigger=CronTrigger(trigger_record.cron_expression),
+                name=scheduler.name,
+            )
+        )
+
+    return manager
+
+
+def start_scheduler_manager_from_database(
+    storage: DatabaseStorage,
+    scheduler_names: Sequence[str] | None = None,
+    max_workers: int = 5,
+    check_interval_seconds: int = 30,
+) -> None:
+    """Load schedulers from the database and start the manager loop."""
+    manager = load_scheduler_manager(
+        storage,
+        scheduler_names=scheduler_names,
+        max_workers=max_workers,
+        check_interval_seconds=check_interval_seconds,
+    )
+    manager.start()
 
 
 def schedule_pipeline(pipeline: Pipeline, expression: str) -> CronScheduler:

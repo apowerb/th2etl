@@ -1,5 +1,5 @@
 from .pipelines.pipeline import run_pipeline
-from .scheduler.helpers import CronScheduler, CronTrigger, schedule_pipeline
+from .scheduler.helpers import CronScheduler, CronTrigger, schedule_pipeline, start_scheduler_manager_from_database
 from .session.runner import main
 from .storage import DatabaseStorage
 
