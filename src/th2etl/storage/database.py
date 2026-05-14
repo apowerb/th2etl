@@ -8,7 +8,7 @@ from typing import Any
 import psycopg
 from psycopg.rows import dict_row
 
-from ..configs.settings import Settings
+from th2etl.configs.settings import Settings
 
 
 @dataclass

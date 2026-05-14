@@ -1,4 +1,4 @@
-from .database import (
+from th2etl.storage.database import (
     BlocRecord,
     DatabaseStorage,
     PipelineRecord,

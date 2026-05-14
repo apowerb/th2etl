@@ -37,6 +37,18 @@ If the package is installed, use the CLI entry point:
 th2etl --background --env SOURCE=prod
 ```
 
+To start the database-backed scheduler manager directly from the command line:
+
+```bash
+th2etl --start-db-scheduler
+```
+
+Or in the background:
+
+```bash
+th2etl --start-db-scheduler --background
+```
+
 ## Quickstart
 
 Create pipeline metadata from the command line and then start the ETL service.

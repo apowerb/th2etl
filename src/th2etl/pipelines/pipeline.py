@@ -4,8 +4,8 @@ import logging
 from collections import deque
 from typing import Any, Callable, Sequence
 
-from ..blocs import ExporterBloc, LoaderBloc, TransformerBloc
-from ..blocs.base import Bloc
+from th2etl.blocs import ExporterBloc, LoaderBloc, TransformerBloc
+from th2etl.blocs.base import Bloc
 from th2etl.storage import DatabaseStorage
 
 logger = logging.getLogger(__name__)

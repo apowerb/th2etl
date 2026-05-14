@@ -1,4 +1,4 @@
-from .pipeline import (
+from th2etl.pipelines.pipeline import (
     ExampleExporter,
     ExampleLoader,
     ExampleTransformer,
