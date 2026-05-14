@@ -8,6 +8,7 @@ class Settings(BaseSettings):
     database_name: str
     database_user: str
     database_password: str
+    database_schema: str | None = None
     database_ssl_mode: str | None = None
     api_key: str
     log_level: str = "INFO"

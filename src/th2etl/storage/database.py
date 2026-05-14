@@ -58,6 +58,10 @@ class DatabaseStorage:
     def __init__(self, dsn: str | None = None, settings: Settings | None = None) -> None:
         if settings is not None:
             dsn = settings.database_dsn
+            self.schema = settings.database_schema
+        else:
+            self.schema = None
+        
         if not dsn:
             raise ValueError(
                 "DatabaseStorage requires either a DSN or a Settings instance with database connection settings"
@@ -71,6 +75,12 @@ class DatabaseStorage:
     def from_settings(cls, settings: Settings) -> "DatabaseStorage":
         return cls(settings=settings)
 
+    def _table_name(self, table: str) -> str:
+        """Return schema-qualified table name if schema is set."""
+        if self.schema:
+            return f"{self.schema}.{table}"
+        return table
+
     def close(self) -> None:
         self.connection.close()
 
@@ -81,10 +91,15 @@ class DatabaseStorage:
         self.close()
 
     def _create_tables(self) -> None:
+        blocs_table = self._table_name("blocs")
+        pipelines_table = self._table_name("pipelines")
+        triggers_table = self._table_name("triggers")
+        schedulers_table = self._table_name("schedulers")
+        
         with self.connection.cursor() as cur:
             cur.execute(
-                """
-                CREATE TABLE IF NOT EXISTS blocs (
+                f"""
+                CREATE TABLE IF NOT EXISTS {blocs_table} (
                     id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
                     bloc_type TEXT NOT NULL,
@@ -95,7 +110,7 @@ class DatabaseStorage:
                     updated_at TIMESTAMPTZ NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS pipelines (
+                CREATE TABLE IF NOT EXISTS {pipelines_table} (
                     id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
                     bloc_names JSONB NOT NULL,
@@ -104,7 +119,7 @@ class DatabaseStorage:
                     updated_at TIMESTAMPTZ NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS triggers (
+                CREATE TABLE IF NOT EXISTS {triggers_table} (
                     id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
                     cron_expression TEXT NOT NULL,
@@ -113,11 +128,11 @@ class DatabaseStorage:
                     updated_at TIMESTAMPTZ NOT NULL
                 );
 
-                CREATE TABLE IF NOT EXISTS schedulers (
+                CREATE TABLE IF NOT EXISTS {schedulers_table} (
                     id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
-                    pipeline_id INTEGER NOT NULL REFERENCES pipelines(id) ON DELETE CASCADE,
-                    trigger_id INTEGER NOT NULL REFERENCES triggers(id) ON DELETE CASCADE,
+                    pipeline_id INTEGER NOT NULL REFERENCES {pipelines_table}(id) ON DELETE CASCADE,
+                    trigger_id INTEGER NOT NULL REFERENCES {triggers_table}(id) ON DELETE CASCADE,
                     description TEXT,
                     created_at TIMESTAMPTZ NOT NULL,
                     updated_at TIMESTAMPTZ NOT NULL
@@ -168,8 +183,10 @@ class DatabaseStorage:
         )
 
     def _row_to_scheduler(self, row: dict[str, Any]) -> SchedulerRecord:
-        pipeline_row = self._query_one("SELECT name FROM pipelines WHERE id = %s", (row["pipeline_id"],))
-        trigger_row = self._query_one("SELECT name FROM triggers WHERE id = %s", (row["trigger_id"],))
+        pipelines_table = self._table_name("pipelines")
+        triggers_table = self._table_name("triggers")
+        pipeline_row = self._query_one(f"SELECT name FROM {pipelines_table} WHERE id = %s", (row["pipeline_id"],))
+        trigger_row = self._query_one(f"SELECT name FROM {triggers_table} WHERE id = %s", (row["trigger_id"],))
         return SchedulerRecord(
             id=row["id"],
             name=row["name"],
@@ -206,8 +223,9 @@ class DatabaseStorage:
         description: str | None = None,
     ) -> BlocRecord:
         now = self._now()
+        blocs_table = self._table_name("blocs")
         row = self._execute(
-            "INSERT INTO blocs (name, bloc_type, dependencies, config, description, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *",
+            f"INSERT INTO {blocs_table} (name, bloc_type, dependencies, config, description, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING *",
             (
                 name,
                 bloc_type,
@@ -222,11 +240,13 @@ class DatabaseStorage:
         return self._row_to_bloc(row)
 
     def get_bloc(self, name: str) -> BlocRecord | None:
-        row = self._query_one("SELECT * FROM blocs WHERE name = %s", (name,))
+        blocs_table = self._table_name("blocs")
+        row = self._query_one(f"SELECT * FROM {blocs_table} WHERE name = %s", (name,))
         return self._row_to_bloc(row) if row else None
 
     def list_blocs(self) -> list[BlocRecord]:
-        rows = self._query_all("SELECT * FROM blocs ORDER BY name")
+        blocs_table = self._table_name("blocs")
+        rows = self._query_all(f"SELECT * FROM {blocs_table} ORDER BY name")
         return [self._row_to_bloc(row) for row in rows]
 
     def update_bloc(
@@ -247,8 +267,9 @@ class DatabaseStorage:
         updated_description = description if description is not None else existing.description
         now = self._now()
 
+        blocs_table = self._table_name("blocs")
         row = self._execute(
-            "UPDATE blocs SET bloc_type = %s, dependencies = %s, config = %s, description = %s, updated_at = %s WHERE name = %s RETURNING *",
+            f"UPDATE {blocs_table} SET bloc_type = %s, dependencies = %s, config = %s, description = %s, updated_at = %s WHERE name = %s RETURNING *",
             (
                 updated_type,
                 self._serialize(updated_dependencies),
@@ -262,8 +283,9 @@ class DatabaseStorage:
         return self._row_to_bloc(row)
 
     def delete_bloc(self, name: str) -> bool:
+        blocs_table = self._table_name("blocs")
         with self.connection.cursor() as cur:
-            cur.execute("DELETE FROM blocs WHERE name = %s", (name,))
+            cur.execute(f"DELETE FROM {blocs_table} WHERE name = %s", (name,))
             deleted = cur.rowcount
         self.connection.commit()
         return deleted > 0
@@ -276,8 +298,9 @@ class DatabaseStorage:
     ) -> PipelineRecord:
         self._ensure_blocs_exist(bloc_names)
         now = self._now()
+        pipelines_table = self._table_name("pipelines")
         row = self._execute(
-            "INSERT INTO pipelines (name, bloc_names, description, created_at, updated_at) VALUES (%s, %s, %s, %s, %s) RETURNING *",
+            f"INSERT INTO {pipelines_table} (name, bloc_names, description, created_at, updated_at) VALUES (%s, %s, %s, %s, %s) RETURNING *",
             (
                 name,
                 self._serialize(bloc_names),
@@ -290,11 +313,13 @@ class DatabaseStorage:
         return self._row_to_pipeline(row)
 
     def get_pipeline(self, name: str) -> PipelineRecord | None:
-        row = self._query_one("SELECT * FROM pipelines WHERE name = %s", (name,))
+        pipelines_table = self._table_name("pipelines")
+        row = self._query_one(f"SELECT * FROM {pipelines_table} WHERE name = %s", (name,))
         return self._row_to_pipeline(row) if row else None
 
     def list_pipelines(self) -> list[PipelineRecord]:
-        rows = self._query_all("SELECT * FROM pipelines ORDER BY name")
+        pipelines_table = self._table_name("pipelines")
+        rows = self._query_all(f"SELECT * FROM {pipelines_table} ORDER BY name")
         return [self._row_to_pipeline(row) for row in rows]
 
     def update_pipeline(
@@ -312,8 +337,9 @@ class DatabaseStorage:
         updated_description = description if description is not None else existing.description
         now = self._now()
 
+        pipelines_table = self._table_name("pipelines")
         row = self._execute(
-            "UPDATE pipelines SET bloc_names = %s, description = %s, updated_at = %s WHERE name = %s RETURNING *",
+            f"UPDATE {pipelines_table} SET bloc_names = %s, description = %s, updated_at = %s WHERE name = %s RETURNING *",
             (
                 self._serialize(updated_bloc_names),
                 updated_description,
@@ -325,8 +351,9 @@ class DatabaseStorage:
         return self._row_to_pipeline(row)
 
     def delete_pipeline(self, name: str) -> bool:
+        pipelines_table = self._table_name("pipelines")
         with self.connection.cursor() as cur:
-            cur.execute("DELETE FROM pipelines WHERE name = %s", (name,))
+            cur.execute(f"DELETE FROM {pipelines_table} WHERE name = %s", (name,))
             deleted = cur.rowcount
         self.connection.commit()
         return deleted > 0
@@ -338,19 +365,22 @@ class DatabaseStorage:
         description: str | None = None,
     ) -> TriggerRecord:
         now = self._now()
+        triggers_table = self._table_name("triggers")
         row = self._execute(
-            "INSERT INTO triggers (name, cron_expression, description, created_at, updated_at) VALUES (%s, %s, %s, %s, %s) RETURNING *",
+            f"INSERT INTO {triggers_table} (name, cron_expression, description, created_at, updated_at) VALUES (%s, %s, %s, %s, %s) RETURNING *",
             (name, cron_expression, description, now, now),
         )
         assert row is not None
         return self._row_to_trigger(row)
 
     def get_trigger(self, name: str) -> TriggerRecord | None:
-        row = self._query_one("SELECT * FROM triggers WHERE name = %s", (name,))
+        triggers_table = self._table_name("triggers")
+        row = self._query_one(f"SELECT * FROM {triggers_table} WHERE name = %s", (name,))
         return self._row_to_trigger(row) if row else None
 
     def list_triggers(self) -> list[TriggerRecord]:
-        rows = self._query_all("SELECT * FROM triggers ORDER BY name")
+        triggers_table = self._table_name("triggers")
+        rows = self._query_all(f"SELECT * FROM {triggers_table} ORDER BY name")
         return [self._row_to_trigger(row) for row in rows]
 
     def update_trigger(
@@ -367,16 +397,18 @@ class DatabaseStorage:
         updated_description = description if description is not None else existing.description
         now = self._now()
 
+        triggers_table = self._table_name("triggers")
         row = self._execute(
-            "UPDATE triggers SET cron_expression = %s, description = %s, updated_at = %s WHERE name = %s RETURNING *",
+            f"UPDATE {triggers_table} SET cron_expression = %s, description = %s, updated_at = %s WHERE name = %s RETURNING *",
             (updated_cron, updated_description, now, name),
         )
         assert row is not None
         return self._row_to_trigger(row)
 
     def delete_trigger(self, name: str) -> bool:
+        triggers_table = self._table_name("triggers")
         with self.connection.cursor() as cur:
-            cur.execute("DELETE FROM triggers WHERE name = %s", (name,))
+            cur.execute(f"DELETE FROM {triggers_table} WHERE name = %s", (name,))
             deleted = cur.rowcount
         self.connection.commit()
         return deleted > 0
@@ -391,19 +423,22 @@ class DatabaseStorage:
         pipeline_id = self._require_pipeline_id(pipeline_name)
         trigger_id = self._require_trigger_id(trigger_name)
         now = self._now()
+        schedulers_table = self._table_name("schedulers")
         row = self._execute(
-            "INSERT INTO schedulers (name, pipeline_id, trigger_id, description, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s) RETURNING *",
+            f"INSERT INTO {schedulers_table} (name, pipeline_id, trigger_id, description, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s) RETURNING *",
             (name, pipeline_id, trigger_id, description, now, now),
         )
         assert row is not None
         return self._row_to_scheduler(row)
 
     def get_scheduler(self, name: str) -> SchedulerRecord | None:
-        row = self._query_one("SELECT * FROM schedulers WHERE name = %s", (name,))
+        schedulers_table = self._table_name("schedulers")
+        row = self._query_one(f"SELECT * FROM {schedulers_table} WHERE name = %s", (name,))
         return self._row_to_scheduler(row) if row else None
 
     def list_schedulers(self) -> list[SchedulerRecord]:
-        rows = self._query_all("SELECT * FROM schedulers ORDER BY name")
+        schedulers_table = self._table_name("schedulers")
+        rows = self._query_all(f"SELECT * FROM {schedulers_table} ORDER BY name")
         return [self._row_to_scheduler(row) for row in rows]
 
     def update_scheduler(
@@ -422,16 +457,18 @@ class DatabaseStorage:
         updated_description = description if description is not None else existing.description
         now = self._now()
 
+        schedulers_table = self._table_name("schedulers")
         row = self._execute(
-            "UPDATE schedulers SET pipeline_id = %s, trigger_id = %s, description = %s, updated_at = %s WHERE name = %s RETURNING *",
+            f"UPDATE {schedulers_table} SET pipeline_id = %s, trigger_id = %s, description = %s, updated_at = %s WHERE name = %s RETURNING *",
             (pipeline_id, trigger_id, updated_description, now, name),
         )
         assert row is not None
         return self._row_to_scheduler(row)
 
     def delete_scheduler(self, name: str) -> bool:
+        schedulers_table = self._table_name("schedulers")
         with self.connection.cursor() as cur:
-            cur.execute("DELETE FROM schedulers WHERE name = %s", (name,))
+            cur.execute(f"DELETE FROM {schedulers_table} WHERE name = %s", (name,))
             deleted = cur.rowcount
         self.connection.commit()
         return deleted > 0
@@ -442,13 +479,15 @@ class DatabaseStorage:
                 raise ValueError(f"Bloc {bloc_name!r} does not exist")
 
     def _require_pipeline_id(self, pipeline_name: str) -> int:
-        row = self._query_one("SELECT id FROM pipelines WHERE name = %s", (pipeline_name,))
+        pipelines_table = self._table_name("pipelines")
+        row = self._query_one(f"SELECT id FROM {pipelines_table} WHERE name = %s", (pipeline_name,))
         if not row:
             raise ValueError(f"Pipeline {pipeline_name!r} does not exist")
         return row["id"]
 
     def _require_trigger_id(self, trigger_name: str) -> int:
-        row = self._query_one("SELECT id FROM triggers WHERE name = %s", (trigger_name,))
+        triggers_table = self._table_name("triggers")
+        row = self._query_one(f"SELECT id FROM {triggers_table} WHERE name = %s", (trigger_name,))
         if not row:
             raise ValueError(f"Trigger {trigger_name!r} does not exist")
         return row["id"]
