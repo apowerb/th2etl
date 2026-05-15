@@ -42,14 +42,13 @@ The following transformer blocs are available:
     - **Config**:
         - `url` (optional): The API endpoint for the agent. Defaults to the development server.
         - `agent_id` (required): The ID of the agent to run (e.g., `database_assistant`).
-        - `user_id` (required): The user's ID, typically their email.
+        - `user_id` (required): The user's ID (e.g., email), used for authentication.
         - `message_text` (required): The text message to send to the agent.
-        - `jwt_token` (required): The JWT token for authentication.
 - `RefreshWebhooksBloc`: Refreshes webhooks via an API call.
     - `bloc_type`: `refresh_webhooks`
     - **Config**:
         - `url` (required): The API endpoint for refreshing webhooks.
-        - `jwt_token` (required): The JWT token for authentication.
+        - `user_id` (required): The user's ID (e.g., email), used for authentication.
 
 ## Usage
 

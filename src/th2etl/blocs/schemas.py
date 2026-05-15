@@ -57,13 +57,12 @@ class RunAdkAgentsConfig(BaseBlocConfig):
 
     url: str = Field("https://api-agent-dev.thaink2.fr/api/adk/run", description="The API endpoint URL for the ADK agent.")
     agent_id: str = Field(..., description="The ID of the agent to run.")
-    user_id: str = Field(..., description="The user's ID, typically an email.")
+    user_id: str = Field(..., description="The user's ID, typically an email, used for the JWT 'sub' claim.")
     message_text: str = Field(..., description="The text content of the message to send to the agent.")
-    jwt_token: str = Field(..., description="The JWT token for authentication.")
 
 
 class RefreshWebhooksConfig(BaseBlocConfig):
     """Configuration for refreshing webhooks."""
 
     url: str = Field(..., description="The API endpoint URL for refreshing webhooks.")
-    jwt_token: str = Field(..., description="The JWT token for authentication.")
+    user_id: str = Field(..., description="The user's ID, typically an email, used for the JWT 'sub' claim.")

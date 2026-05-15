@@ -14,7 +14,7 @@ dependencies = [
     "python-dotenv>=1.0.0",
     "requests>=2.28,<3.0",
     "pyjwt[crypto]>=2.8,<3.0",
-    "python-jose>=3.3,<4.0",
+    "python-jose[cryptography]>=3.3,<4.0",
     "passlib>=1.7.4",
 ]
 
