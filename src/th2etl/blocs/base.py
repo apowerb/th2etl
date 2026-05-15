@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from enum import Enum
-from typing import Any, Sequence
+from typing import Any, Sequence, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from th2etl.pipelines.context import RunContext
 
 
 class BlocType(str, Enum):
@@ -22,7 +25,7 @@ class Bloc(ABC):
         ...
 
     @abstractmethod
-    def execute(self, context: dict[str, Any]) -> None:
+    def execute(self, run_context: RunContext) -> None:
         ...
 
 

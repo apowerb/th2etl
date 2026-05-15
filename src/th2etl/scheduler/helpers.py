@@ -7,7 +7,8 @@ from datetime import datetime, timedelta
 from typing import Iterable, Sequence
 from pathlib import Path
 
-from th2etl.pipelines.pipeline import Pipeline, RunContext, build_pipeline_from_database
+from th2etl.pipelines.pipeline import Pipeline, build_pipeline_from_database
+from th2etl.pipelines.context import RunContext
 from th2etl.storage import DatabaseStorage, TriggerRecord
 from th2etl.configs.settings import get_settings
 
@@ -108,8 +109,9 @@ class CronTrigger:
 
 
 class CronScheduler:
-    def __init__(self, pipeline: Pipeline, trigger: CronTrigger, name: str | None = None, trigger_name: str | None = None, settings: Settings | None = None) -> None:
+    def __init__(self, pipeline: Pipeline, trigger: CronTrigger, name: str | None = None, trigger_name: str | None = None, settings: Settings | None = None, pipeline_name: str | None = None) -> None:
         self.pipeline = pipeline
+        self.pipeline_name = pipeline_name
         self.trigger = trigger
         self.trigger_name = trigger_name
         self.name = name or pipeline.__class__.__name__
@@ -218,18 +220,41 @@ class SchedulerManager:
 
     def _refresh_or_add_scheduler(self, scheduler_record: SchedulerRecord) -> None:
         existing = next((s for s in self.schedulers if s.name == scheduler_record.name), None)
-        if existing is not None:
+
+        try:
+            trigger_record = self.storage.get_trigger(scheduler_record.trigger_name)
+            if not trigger_record:
+                logger.warning(
+                    "Skipping scheduler '%s' because its trigger '%s' could not be found.",
+                    scheduler_record.name,
+                    scheduler_record.trigger_name,
+                )
+                return
+        except Exception as exc:
+            logger.warning("Failed to check trigger for scheduler %s: %s", scheduler_record.name, exc)
+            return
+
+        if existing:
+            # Check if the core properties have changed before creating a new scheduler object.
+            if (
+                existing.pipeline_name == scheduler_record.pipeline_name
+                and existing.trigger_name == scheduler_record.trigger_name
+                and existing.trigger.expression == trigger_record.cron_expression
+            ):
+                return  # No changes detected
+
             self._replace_scheduler(existing, scheduler_record)
             return
 
+        # It's a new scheduler, so we add it.
         try:
             scheduler = self._build_scheduler_from_record(scheduler_record)
         except Exception as exc:
-            logger.warning("Failed to add scheduler %s from change event: %s", scheduler_record.name, exc)
+            logger.warning("Failed to add new scheduler %s from DB: %s", scheduler_record.name, exc)
             return
 
-        self.schedulers.append(scheduler)
-        logger.info("Added scheduler %s to manager", scheduler_record.name)
+        self.add_scheduler(scheduler)
+        logger.info("Added new scheduler '%s' to manager", scheduler_record.name)
 
     def _replace_scheduler(self, existing: CronScheduler, scheduler_record: SchedulerRecord) -> None:
         try:
@@ -254,6 +279,7 @@ class SchedulerManager:
         pipeline = build_pipeline_from_database(self.storage, scheduler_record.pipeline_name)
         return CronScheduler(
             pipeline=pipeline,
+            pipeline_name=scheduler_record.pipeline_name,
             trigger=CronTrigger(trigger_record.cron_expression),
             name=scheduler_record.name,
             trigger_name=scheduler_record.trigger_name,
@@ -384,6 +410,7 @@ def load_scheduler_manager(
         manager.add_scheduler(
             CronScheduler(
                 pipeline=pipeline,
+                pipeline_name=scheduler.pipeline_name,
                 trigger=trigger,
                 name=scheduler.name,
                 trigger_name=scheduler.trigger_name,

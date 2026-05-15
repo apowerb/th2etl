@@ -1,17 +1,15 @@
-from th2etl.pipelines.pipeline import (
-    ExampleExporter,
-    ExampleLoader,
-    ExampleTransformer,
+from .pipeline import (
     Pipeline,
     build_example_pipeline,
+    build_pipeline_from_database,
     run_pipeline,
 )
+from .context import RunContext
 
 __all__ = [
     "Pipeline",
+    "RunContext",
     "build_example_pipeline",
+    "build_pipeline_from_database",
     "run_pipeline",
-    "ExampleLoader",
-    "ExampleTransformer",
-    "ExampleExporter",
 ]

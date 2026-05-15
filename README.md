@@ -11,6 +11,28 @@ A pipeline is modeled as a set of interdependent blocs. Each bloc is one of:
 
 Dependencies between blocs are resolved before execution, so the pipeline runs in dependency order.
 
+### Loader Blocs
+
+The following loader blocs are available:
+
+- `CsvLoaderBloc`: Loads data from a CSV file.
+    - `bloc_type`: `csv_loader`
+    - **Config**:
+        - `file_path` (required): The path to the CSV file.
+        - `delimiter` (optional): The delimiter character (default: `,`).
+- `PostgresLoaderBloc`: Loads data from a PostgreSQL database.
+    - `bloc_type`: `postgres_loader`
+    - **Config**:
+        - `query` (required): The SQL query to execute.
+- `ApiLoaderBloc`: Loads data from a web API.
+    - `bloc_type`: `api_loader`
+    - **Config**:
+        - `url` (required): The API endpoint URL.
+        - `method` (optional): The HTTP method (default: `GET`).
+        - `params` (optional): A dictionary of URL parameters.
+        - `headers` (optional): A dictionary of HTTP headers.
+        - `json` (optional): A dictionary for the JSON request body.
+
 ## Usage
 
 Run the pipeline in the current process:

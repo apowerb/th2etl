@@ -3,31 +3,27 @@ from __future__ import annotations
 import logging
 from collections import deque
 from typing import Any, Callable, Sequence
-from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
+import json
 
-from th2etl.blocs import ExporterBloc, LoaderBloc, TransformerBloc
+from th2etl.blocs import (
+    ExporterBloc,
+    LoaderBloc,
+    TransformerBloc,
+    CsvLoaderBloc,
+    PostgresLoaderBloc,
+    ApiLoaderBloc,
+)
 from th2etl.blocs.base import Bloc
 from th2etl.storage import DatabaseStorage
+from th2etl.blocs.schemas import ExampleTransformerConfig, ExampleExporterConfig
+from th2etl.pipelines.context import RunContext
 
 logger = logging.getLogger(__name__)
 
 BlocFactory = Callable[[str, dict[str, Any], Sequence[str] | None], Bloc]
 BLOC_FACTORY_REGISTRY: dict[str, BlocFactory] = {}
-
-
-@dataclass
-class RunContext:
-    """Provides details about the current pipeline run."""
-
-    scheduler_name: str | None = None
-    trigger_name: str | None = None
-    scheduled_at: datetime | None = None
-    output_dir: Path | None = None
-
-    # Arbitrary storage for passing data between blocs
-    context_vars: dict[str, Any] = field(default_factory=dict)
 
 
 def register_bloc_factory(bloc_type: str, factory: BlocFactory) -> None:
@@ -103,11 +99,11 @@ class Pipeline:
         return order
 
     def execute(self, run_context: RunContext | None = None) -> RunContext:
-        logger.info("Starting pipeline execution")
-
-        # If no context is provided, create a default one
         if run_context is None:
             run_context = RunContext()
+        
+        execution_id = f" for '{run_context.scheduler_name}'" if run_context.scheduler_name else ""
+        logger.info("Starting pipeline execution%s", execution_id)
 
         # Ensure output directory exists if provided
         if run_context.output_dir:
@@ -116,57 +112,61 @@ class Pipeline:
 
         for bloc in self._resolve_execution_order():
             logger.info("Running bloc %s (%s)", bloc.name, bloc.type.value)
-            bloc.execute(run_context.context_vars)
-
-        logger.info("Pipeline execution completed")
+            bloc.execute(run_context)
+            
+        logger.info("Pipeline execution completed%s", execution_id)
         return run_context
-
-
-class ExampleLoader(LoaderBloc):
-    def __init__(self, name: str = "example_loader", dependencies: Sequence[str] | None = None, config: dict[str, Any] | None = None) -> None:
-        super().__init__(name=name, dependencies=dependencies)
-        self.config = config or {}
-
-    def execute(self, context: dict[str, Any]) -> None:
-        logger.info("Loading rows")
-        context["raw_rows"] = [
-            {"id": 1, "value": 100},
-            {"id": 2, "value": 200},
-        ]
-        logger.info("Loaded %d rows", len(context["raw_rows"]))
 
 
 class ExampleTransformer(TransformerBloc):
     def __init__(self, name: str = "example_transformer", dependencies: Sequence[str] | None = None, config: dict[str, Any] | None = None) -> None:
         super().__init__(name=name, dependencies=dependencies)
-        self.config = config or {}
+        self.config = ExampleTransformerConfig(**(config or {}))
 
-    def execute(self, context: dict[str, Any]) -> None:
-        raw_rows = context.get("raw_rows", [])
-        logger.info("Transforming %d rows", len(raw_rows))
-        transformed = [{"id": row["id"], "value": row["value"] * 2} for row in raw_rows]
-        context["transformed_rows"] = transformed
-        logger.info("Transformed %d rows", len(transformed))
+    def execute(self, run_context: RunContext) -> None:
+        # This example assumes a single data source from the context
+        input_data = next(iter(run_context.context_vars.values()), [])
+        logger.debug("Transforming %d rows", len(input_data))
+
+        transformed = [
+            {"id": row.get("id"), "value": float(row.get("value", 0)) * self.config.factor}
+            for row in input_data
+        ]
+        run_context.context_vars[f"{self.name}_data"] = transformed
+        logger.debug("Transformed %d rows", len(transformed))
 
 
 class ExampleExporter(ExporterBloc):
     def __init__(self, name: str = "example_exporter", dependencies: Sequence[str] | None = None, config: dict[str, Any] | None = None) -> None:
         super().__init__(name=name, dependencies=dependencies)
-        self.config = config or {}
+        self.config = ExampleExporterConfig(**(config or {}))
 
-    def execute(self, context: dict[str, Any]) -> None:
-        exported_rows = context.get("transformed_rows", [])
-        logger.info("Exporting %d rows", len(exported_rows))
+    def execute(self, run_context: RunContext) -> None:
+        # This example assumes a single data source from the context
+        exported_rows = next(iter(run_context.context_vars.values()), [])
+        logger.debug("Exporting %d rows", len(exported_rows))
 
-        # The run_context is not directly available here, so we can't easily get the output_dir
-        # This part of the example would need to be updated if it needs to write to a file
-        for row in exported_rows:
-            logger.info("Exported row: %s", row)
-        context["exported_count"] = len(exported_rows)
+        if run_context.output_dir:
+            output_file = run_context.output_dir / "exported_data.json"
+            with output_file.open("w") as f:
+                json.dump(exported_rows, f, indent=2)
+            logger.debug(f"Saved {len(exported_rows)} rows to {output_file}")
+        else:
+            logger.warning("No output directory set. Skipping file export.")
+
+        run_context.context_vars["exported_count"] = len(exported_rows)
 
 
-def _example_loader_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
-    return ExampleLoader(name=name, dependencies=dependencies, config=config)
+def _csv_loader_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
+    return CsvLoaderBloc(name=name, dependencies=dependencies, config=config)
+
+
+def _postgres_loader_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
+    return PostgresLoaderBloc(name=name, dependencies=dependencies, config=config)
+
+
+def _api_loader_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
+    return ApiLoaderBloc(name=name, dependencies=dependencies, config=config)
 
 
 def _example_transformer_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
@@ -177,13 +177,20 @@ def _example_exporter_factory(name: str, config: dict[str, Any], dependencies: S
     return ExampleExporter(name=name, dependencies=dependencies, config=config)
 
 
-register_bloc_factory("example_loader", _example_loader_factory)
+register_bloc_factory("csv_loader", _csv_loader_factory)
+register_bloc_factory("postgres_loader", _postgres_loader_factory)
+register_bloc_factory("api_loader", _api_loader_factory)
 register_bloc_factory("example_transformer", _example_transformer_factory)
 register_bloc_factory("example_exporter", _example_exporter_factory)
 
 
 def build_example_pipeline() -> Pipeline:
-    return Pipeline([ExampleLoader(), ExampleTransformer(), ExampleExporter()])
+    # This function is now for demonstration and may not be used directly by the scheduler
+    # if all pipelines are defined in the database.
+    transformer = ExampleTransformer(dependencies=["my_csv_loader"])
+    exporter = ExampleExporter(dependencies=["my_transformer"])
+    loader = CsvLoaderBloc(name="my_csv_loader", config={"file_path": "path/to/your/data.csv"})
+    return Pipeline([loader, transformer, exporter])
 
 
 def run_pipeline() -> None:
