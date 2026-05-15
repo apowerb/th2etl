@@ -253,6 +253,7 @@ dependencies = [
     { name = "psycopg", extra = ["binary"] },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "python-dotenv" },
 ]
 
 [package.metadata]
@@ -260,6 +261,7 @@ requires-dist = [
     { name = "psycopg", extras = ["binary"], specifier = ">=3.1,<4.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.14.1" },
+    { name = "python-dotenv", specifier = ">=1.0.0" },
 ]
 
 [[package]]

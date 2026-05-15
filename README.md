@@ -78,7 +78,7 @@ with DatabaseStorage.from_settings(s) as storage:
 ```powershell
 python -c "from th2etl import DatabaseStorage; from th2etl.configs.settings import get_settings; s = get_settings();
 with DatabaseStorage.from_settings(s) as storage:
-    storage.create_trigger('every_hour','0 * * * *')"
+    storage.create_trigger('every_hour','example_pipeline','0 * * * *')"
 ```
 
 4. Create the pipeline and optional scheduler:
@@ -115,8 +115,8 @@ with DatabaseStorage.from_settings(settings) as storage:
     storage.create_bloc("example_loader", "example_loader", dependencies=[], config={"source": "csv"})
     storage.create_bloc("example_transformer", "example_transformer", dependencies=["example_loader"], config={"factor": 2})
     storage.create_bloc("example_exporter", "example_exporter", dependencies=["example_transformer"], config={"destination": "stdout"})
-    storage.create_trigger("every_hour", "0 * * * *")
     storage.create_pipeline("example_pipeline", ["example_loader", "example_transformer", "example_exporter"])
+    storage.create_trigger("every_hour", "example_pipeline", "0 * * * *")
     storage.create_scheduler("example_scheduler", "example_pipeline", "every_hour")
 
     print(storage.list_pipelines())

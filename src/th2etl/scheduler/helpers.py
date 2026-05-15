@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Iterable, Sequence
 
 from th2etl.pipelines.pipeline import Pipeline, build_pipeline_from_database
-from th2etl.storage import DatabaseStorage
+from th2etl.storage import DatabaseStorage, TriggerRecord
 
 logger = logging.getLogger(__name__)
 
@@ -26,21 +26,39 @@ def _parse_part(part: str, min_value: int, max_value: int) -> set[int]:
         return set(range(min_value, max_value + 1))
 
     for token in part.split(","):
+        token = token.strip()
+        if not token:
+            raise ValueError(f"Invalid cron syntax: empty token in '{part}'")
+
         if "/" in token:
             range_part, step_part = token.split("/", 1)
-            step = int(step_part)
+            if not step_part:
+                raise ValueError(f"Invalid cron syntax: missing step value in '{token}'")
+            try:
+                step = int(step_part)
+            except ValueError as exc:
+                raise ValueError(f"Invalid cron step in '{token}': {exc}") from exc
         else:
             range_part = token
             step = 1
+
+        if not range_part:
+            raise ValueError(f"Invalid cron syntax: missing range before '/' in '{token}'")
 
         if range_part == "*":
             start, end = min_value, max_value
         elif "-" in range_part:
             start_str, end_str = range_part.split("-", 1)
-            start = int(start_str)
-            end = int(end_str)
+            try:
+                start = int(start_str)
+                end = int(end_str)
+            except ValueError as exc:
+                raise ValueError(f"Invalid cron range in '{token}': {exc}") from exc
         else:
-            start = int(range_part)
+            try:
+                start = int(range_part)
+            except ValueError as exc:
+                raise ValueError(f"Invalid cron value in '{token}': {exc}") from exc
             end = start
 
         if start < min_value or end > max_value:
@@ -53,6 +71,7 @@ def _parse_part(part: str, min_value: int, max_value: int) -> set[int]:
 
 class CronTrigger:
     def __init__(self, expression: str) -> None:
+        self.expression = expression
         fields = expression.strip().split()
         if len(fields) != 5:
             raise ValueError("Cron expression must have 5 fields: minute hour day month weekday")
@@ -86,11 +105,13 @@ class CronTrigger:
 
 
 class CronScheduler:
-    def __init__(self, pipeline: Pipeline, trigger: CronTrigger, name: str | None = None) -> None:
+    def __init__(self, pipeline: Pipeline, trigger: CronTrigger, name: str | None = None, trigger_name: str | None = None) -> None:
         self.pipeline = pipeline
         self.trigger = trigger
+        self.trigger_name = trigger_name
         self.name = name or pipeline.__class__.__name__
         self._next_run = self.trigger.next_run(datetime.now())
+        logger.info(f"Initialized scheduler '{self.name}' with trigger '{trigger.expression}'. Next run at {self._next_run}")
 
     def run_once(self) -> None:
         start_at = datetime.now()
@@ -100,6 +121,7 @@ class CronScheduler:
 
     def run_pending(self) -> bool:
         now = datetime.now().replace(second=0, microsecond=0)
+        logger.debug(f"Checking scheduler '{self.name}' at {now}. Next run is at {self._next_run}.")
         if now >= self._next_run:
             self.run_once()
             return True
@@ -124,12 +146,17 @@ class CronScheduler:
 
 
 class SchedulerManager:
-    def __init__(self, schedulers: Sequence[CronScheduler] | None = None, max_workers: int = 5, check_interval_seconds: int = 30) -> None:
+    def __init__(self, schedulers: Sequence[CronScheduler] | None = None, max_workers: int = 5, check_interval_seconds: int = 30, storage: DatabaseStorage | None = None, refresh_interval_seconds: int = 60) -> None:
         self.schedulers: list[CronScheduler] = list(schedulers or [])
         self.check_interval_seconds = check_interval_seconds
+        self.refresh_interval_seconds = refresh_interval_seconds
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
+        self.storage = storage
+        self._last_triggers_refresh = datetime.min
+        self._last_schedulers_refresh = datetime.min
 
     def add_scheduler(self, scheduler: CronScheduler) -> None:
+        logger.info(f"Adding scheduler '{scheduler.name}' to manager.")
         self.schedulers.append(scheduler)
 
     def run_pending(self) -> list[Future[None]]:
@@ -142,10 +169,142 @@ class SchedulerManager:
                 futures.append(self.executor.submit(scheduler.run_once))
         return futures
 
+    def _on_trigger_change(self, trigger_record: TriggerRecord) -> None:
+        for scheduler in self.schedulers:
+            if scheduler.trigger_name != trigger_record.name:
+                continue
+
+            logger.info(
+                "Refreshing scheduler %s because trigger %s changed to '%s'",
+                scheduler.name,
+                trigger_record.name,
+                trigger_record.cron_expression,
+            )
+            try:
+                scheduler.trigger = CronTrigger(trigger_record.cron_expression)
+                scheduler.schedule_next_run(datetime.now())
+            except ValueError as exc:
+                logger.warning(
+                    "Skipping invalid trigger update for %s: %s",
+                    trigger_record.name,
+                    exc,
+                )
+
+    def _refresh_or_add_scheduler(self, scheduler_record: SchedulerRecord) -> None:
+        existing = next((s for s in self.schedulers if s.name == scheduler_record.name), None)
+        if existing is not None:
+            self._replace_scheduler(existing, scheduler_record)
+            return
+
+        try:
+            scheduler = self._build_scheduler_from_record(scheduler_record)
+        except Exception as exc:
+            logger.warning("Failed to add scheduler %s from change event: %s", scheduler_record.name, exc)
+            return
+
+        self.schedulers.append(scheduler)
+        logger.info("Added scheduler %s to manager", scheduler_record.name)
+
+    def _replace_scheduler(self, existing: CronScheduler, scheduler_record: SchedulerRecord) -> None:
+        try:
+            new_scheduler = self._build_scheduler_from_record(scheduler_record)
+        except Exception as exc:
+            logger.warning("Failed to refresh scheduler %s: %s", scheduler_record.name, exc)
+            return
+
+        existing.pipeline = new_scheduler.pipeline
+        existing.trigger = new_scheduler.trigger
+        existing.trigger_name = new_scheduler.trigger_name
+        existing.schedule_next_run(datetime.now())
+
+    def _build_scheduler_from_record(self, scheduler_record: SchedulerRecord) -> CronScheduler:
+        trigger_record = self.storage.get_trigger(scheduler_record.trigger_name)
+        if trigger_record is None:
+            raise ValueError(
+                f"Trigger {scheduler_record.trigger_name!r} referenced by scheduler {scheduler_record.name!r} does not exist"
+            )
+
+        pipeline = build_pipeline_from_database(self.storage, scheduler_record.pipeline_name)
+        return CronScheduler(
+            pipeline=pipeline,
+            trigger=CronTrigger(trigger_record.cron_expression),
+            name=scheduler_record.name,
+            trigger_name=scheduler_record.trigger_name,
+        )
+
+    def _refresh_triggers_from_database(self) -> None:
+        """Reload trigger cron expressions from database to pick up changes as fallback."""
+        if not self.storage:
+            return
+        
+        now = datetime.now()
+        if (now - self._last_triggers_refresh).total_seconds() < self.refresh_interval_seconds:
+            return
+        
+        try:
+            for scheduler in self.schedulers:
+                if not scheduler.trigger_name:
+                    continue
+
+                trigger_record = self.storage.get_trigger(scheduler.trigger_name)
+                if not trigger_record:
+                    continue
+
+                new_cron = trigger_record.cron_expression
+                if new_cron != scheduler.trigger.expression:
+                    logger.info(
+                        "Trigger %s cron expression changed from '%s' to '%s'",
+                        scheduler.name,
+                        scheduler.trigger.expression,
+                        new_cron,
+                    )
+                    try:
+                        scheduler.trigger = CronTrigger(new_cron)
+                        scheduler.schedule_next_run(now)
+                    except ValueError as exc:
+                        logger.warning(
+                            "Skipping invalid refreshed cron '%s' for trigger %s: %s",
+                            new_cron,
+                            scheduler.trigger_name,
+                            exc,
+                        )
+            self._last_triggers_refresh = now
+        except Exception as e:
+            logger.warning("Failed to refresh triggers from database: %s", e)
+
+    def _refresh_schedulers_from_database(self) -> None:
+        if not self.storage:
+            return
+
+        now = datetime.now()
+        if (now - self._last_schedulers_refresh).total_seconds() < self.refresh_interval_seconds:
+            return
+
+        try:
+            db_schedulers = {record.name: record for record in self.storage.list_schedulers()}
+            current_names = {scheduler.name for scheduler in self.schedulers}
+
+            for record in db_schedulers.values():
+                self._refresh_or_add_scheduler(record)
+
+            removed_names = current_names - set(db_schedulers)
+            if removed_names:
+                self.schedulers = [s for s in self.schedulers if s.name not in removed_names]
+                logger.info("Removed schedulers no longer present in DB: %s", sorted(removed_names))
+
+            self._last_schedulers_refresh = now
+        except Exception as e:
+            logger.warning("Failed to refresh schedulers from database: %s", e)
+
     def start(self) -> None:
         logger.info("Starting SchedulerManager with %d pipelines", len(self.schedulers))
+        if not self.schedulers:
+            logger.warning("SchedulerManager started with no schedulers.")
         try:
             while True:
+                logger.debug("SchedulerManager main loop tick.")
+                self._refresh_triggers_from_database()
+                self._refresh_schedulers_from_database()
                 futures = self.run_pending()
                 if futures:
                     logger.info("Dispatched %d scheduled pipeline(s)", len(futures))
@@ -161,9 +320,17 @@ def load_scheduler_manager(
     scheduler_names: Sequence[str] | None = None,
     max_workers: int = 5,
     check_interval_seconds: int = 30,
+    refresh_interval_seconds: int = 60,
 ) -> SchedulerManager:
-    manager = SchedulerManager(max_workers=max_workers, check_interval_seconds=check_interval_seconds)
-    for scheduler in storage.list_schedulers():
+    logger.info("Loading scheduler manager from database.")
+    manager = SchedulerManager(max_workers=max_workers, check_interval_seconds=check_interval_seconds, storage=storage, refresh_interval_seconds=refresh_interval_seconds)
+    if hasattr(storage, "add_trigger_change_listener"):
+        storage.add_trigger_change_listener(manager._on_trigger_change)
+    
+    schedulers_from_db = storage.list_schedulers()
+    logger.info(f"Found {len(schedulers_from_db)} scheduler(s) in the database.")
+
+    for scheduler in schedulers_from_db:
         if scheduler_names and scheduler.name not in scheduler_names:
             continue
 
@@ -171,15 +338,24 @@ def load_scheduler_manager(
         if trigger_record is None:
             raise ValueError(f"Trigger {scheduler.trigger_name!r} referenced by scheduler {scheduler.name!r} does not exist")
 
+        try:
+            trigger = CronTrigger(trigger_record.cron_expression)
+        except ValueError as exc:
+            raise ValueError(
+                f"Invalid cron expression for trigger {scheduler.trigger_name!r}: {exc}"
+            ) from exc
+
         pipeline = build_pipeline_from_database(storage, scheduler.pipeline_name)
         manager.add_scheduler(
             CronScheduler(
                 pipeline=pipeline,
-                trigger=CronTrigger(trigger_record.cron_expression),
+                trigger=trigger,
                 name=scheduler.name,
+                trigger_name=scheduler.trigger_name,
             )
         )
-
+    
+    logger.info(f"SchedulerManager loaded with {len(manager.schedulers)} scheduler(s).")
     return manager
 
 
@@ -188,13 +364,18 @@ def start_scheduler_manager_from_database(
     scheduler_names: Sequence[str] | None = None,
     max_workers: int = 5,
     check_interval_seconds: int = 30,
+    refresh_interval_seconds: int = 60,
 ) -> None:
-    """Load schedulers from the database and start the manager loop."""
+    """Load schedulers from the database and start the manager loop.
+    
+    Triggers are refreshed from the database every refresh_interval_seconds to pick up changes.
+    """
     manager = load_scheduler_manager(
         storage,
         scheduler_names=scheduler_names,
         max_workers=max_workers,
         check_interval_seconds=check_interval_seconds,
+        refresh_interval_seconds=refresh_interval_seconds,
     )
     manager.start()
 

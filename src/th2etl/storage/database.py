@@ -1,14 +1,17 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any
+from typing import Any, Callable
 
 import psycopg
 from psycopg.rows import dict_row
 
 from th2etl.configs.settings import Settings
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -37,6 +40,7 @@ class PipelineRecord:
 class TriggerRecord:
     id: int | None
     name: str
+    pipeline_id: int | None
     cron_expression: str
     description: str | None
     created_at: str
@@ -69,6 +73,7 @@ class DatabaseStorage:
 
         self.dsn = dsn
         self.connection = psycopg.connect(self.dsn, row_factory=dict_row)
+        self._trigger_listeners: list[Callable[[TriggerRecord], None]] = []
         self._create_tables()
 
     @classmethod
@@ -76,10 +81,24 @@ class DatabaseStorage:
         return cls(settings=settings)
 
     def _table_name(self, table: str) -> str:
-        """Return schema-qualified table name if schema is set."""
+        """Return schema-qualified table name with etl_ prefix if schema is set."""
+        prefixed_table = f"etl_{table}"
         if self.schema:
-            return f"{self.schema}.{table}"
-        return table
+            return f"{self.schema}.{prefixed_table}"
+        return prefixed_table
+
+    def add_trigger_change_listener(self, listener: Callable[[TriggerRecord], None]) -> None:
+        self._trigger_listeners.append(listener)
+
+    def remove_trigger_change_listener(self, listener: Callable[[TriggerRecord], None]) -> None:
+        self._trigger_listeners.remove(listener)
+
+    def _notify_trigger_change(self, trigger: TriggerRecord) -> None:
+        for listener in list(self._trigger_listeners):
+            try:
+                listener(trigger)
+            except Exception as exc:
+                logger.warning("Trigger change listener failed: %s", exc)
 
     def close(self) -> None:
         self.connection.close()
@@ -122,6 +141,7 @@ class DatabaseStorage:
                 CREATE TABLE IF NOT EXISTS {triggers_table} (
                     id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
+                    pipeline_id INTEGER NOT NULL REFERENCES {pipelines_table}(id) ON DELETE CASCADE,
                     cron_expression TEXT NOT NULL,
                     description TEXT,
                     created_at TIMESTAMPTZ NOT NULL,
@@ -176,6 +196,7 @@ class DatabaseStorage:
         return TriggerRecord(
             id=row["id"],
             name=row["name"],
+            pipeline_id=row.get("pipeline_id"),
             cron_expression=row["cron_expression"],
             description=row["description"],
             created_at=row["created_at"].isoformat() if row["created_at"] else "",
@@ -186,7 +207,17 @@ class DatabaseStorage:
         pipelines_table = self._table_name("pipelines")
         triggers_table = self._table_name("triggers")
         pipeline_row = self._query_one(f"SELECT name FROM {pipelines_table} WHERE id = %s", (row["pipeline_id"],))
+        if pipeline_row is None:
+            raise ValueError(
+                f"Scheduler {row['name']!r} references missing pipeline id {row['pipeline_id']!r}"
+            )
+
         trigger_row = self._query_one(f"SELECT name FROM {triggers_table} WHERE id = %s", (row["trigger_id"],))
+        if trigger_row is None:
+            raise ValueError(
+                f"Scheduler {row['name']!r} references missing trigger id {row['trigger_id']!r}"
+            )
+
         return SchedulerRecord(
             id=row["id"],
             name=row["name"],
@@ -358,20 +389,30 @@ class DatabaseStorage:
         self.connection.commit()
         return deleted > 0
 
+    def _validate_cron_expression(self, expression: str) -> None:
+        from th2etl.scheduler.helpers import CronTrigger
+
+        CronTrigger(expression)
+
     def create_trigger(
         self,
         name: str,
+        pipeline_name: str,
         cron_expression: str,
         description: str | None = None,
     ) -> TriggerRecord:
+        self._validate_cron_expression(cron_expression)
+        pipeline_id = self._require_pipeline_id(pipeline_name)
         now = self._now()
         triggers_table = self._table_name("triggers")
         row = self._execute(
-            f"INSERT INTO {triggers_table} (name, cron_expression, description, created_at, updated_at) VALUES (%s, %s, %s, %s, %s) RETURNING *",
-            (name, cron_expression, description, now, now),
+            f"INSERT INTO {triggers_table} (name, pipeline_id, cron_expression, description, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s) RETURNING *",
+            (name, pipeline_id, cron_expression, description, now, now),
         )
         assert row is not None
-        return self._row_to_trigger(row)
+        trigger = self._row_to_trigger(row)
+        self._notify_trigger_change(trigger)
+        return trigger
 
     def get_trigger(self, name: str) -> TriggerRecord | None:
         triggers_table = self._table_name("triggers")
@@ -386,6 +427,7 @@ class DatabaseStorage:
     def update_trigger(
         self,
         name: str,
+        pipeline_name: str | None = None,
         cron_expression: str | None = None,
         description: str | None = None,
     ) -> TriggerRecord:
@@ -393,17 +435,21 @@ class DatabaseStorage:
         if existing is None:
             raise ValueError(f"Trigger {name!r} does not exist")
 
+        pipeline_id = self._require_pipeline_id(pipeline_name) if pipeline_name else existing.pipeline_id
         updated_cron = cron_expression if cron_expression is not None else existing.cron_expression
+        self._validate_cron_expression(updated_cron)
         updated_description = description if description is not None else existing.description
         now = self._now()
 
         triggers_table = self._table_name("triggers")
         row = self._execute(
-            f"UPDATE {triggers_table} SET cron_expression = %s, description = %s, updated_at = %s WHERE name = %s RETURNING *",
-            (updated_cron, updated_description, now, name),
+            f"UPDATE {triggers_table} SET pipeline_id = %s, cron_expression = %s, description = %s, updated_at = %s WHERE name = %s RETURNING *",
+            (pipeline_id, updated_cron, updated_description, now, name),
         )
         assert row is not None
-        return self._row_to_trigger(row)
+        trigger = self._row_to_trigger(row)
+        self._notify_trigger_change(trigger)
+        return trigger
 
     def delete_trigger(self, name: str) -> bool:
         triggers_table = self._table_name("triggers")
@@ -429,7 +475,8 @@ class DatabaseStorage:
             (name, pipeline_id, trigger_id, description, now, now),
         )
         assert row is not None
-        return self._row_to_scheduler(row)
+        scheduler = self._row_to_scheduler(row)
+        return scheduler
 
     def get_scheduler(self, name: str) -> SchedulerRecord | None:
         schedulers_table = self._table_name("schedulers")
@@ -463,7 +510,8 @@ class DatabaseStorage:
             (pipeline_id, trigger_id, updated_description, now, name),
         )
         assert row is not None
-        return self._row_to_scheduler(row)
+        scheduler = self._row_to_scheduler(row)
+        return scheduler
 
     def delete_scheduler(self, name: str) -> bool:
         schedulers_table = self._table_name("schedulers")
