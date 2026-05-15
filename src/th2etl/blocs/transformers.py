@@ -7,6 +7,7 @@ import uuid
 import requests
 
 from th2etl.blocs.base import TransformerBloc
+from th2etl.helpers.security import create_access_token
 from th2etl.pipelines.context import RunContext
 from th2etl.blocs.schemas import RunAdkAgentsConfig, RefreshWebhooksConfig
 
@@ -28,8 +29,9 @@ class RunAdkAgentsBloc(TransformerBloc):
     def execute(self, run_context: RunContext) -> None:
         logger.info(f"Running ADK agent '{self.config.agent_id}' for user '{self.config.user_id}'")
         
+        jwt_token = create_access_token(data = {"user_id": self.config.user_id, "type": "access"})
         headers = {
-            "Authorization": f"Bearer {self.config.jwt_token}",
+            "Authorization": f"Bearer {jwt_token}",
             "Content-Type": "application/json",
             "Accept": "application/json",
         }
@@ -73,8 +75,9 @@ class RefreshWebhooksBloc(TransformerBloc):
 
     def execute(self, run_context: RunContext) -> None:
         logger.info(f"Refreshing webhooks at '{self.config.url}'")
-        headers = {"Authorization": f"Bearer {self.config.jwt_token}"}
-        
+        jwt_token = create_access_token(data={"user_id": self.config.user_id, "type": "system"})
+        headers = {"Authorization": f"Bearer {jwt_token}"}
+
         try:
             response = requests.post(self.config.url, headers=headers)
             response.raise_for_status()
