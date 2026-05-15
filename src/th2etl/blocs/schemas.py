@@ -55,9 +55,10 @@ class ScriptBlocConfig(BaseBlocConfig):
 class RunAdkAgentsConfig(BaseBlocConfig):
     """Configuration for running an ADK agent."""
 
-    url: str = Field(..., description="The API endpoint URL for the ADK agent.")
+    url: str = Field("https://api-agent-dev.thaink2.fr/api/adk/run", description="The API endpoint URL for the ADK agent.")
     agent_id: str = Field(..., description="The ID of the agent to run.")
-    message: str = Field(..., description="The message to send to the agent.")
+    user_id: str = Field(..., description="The user's ID, typically an email.")
+    message_text: str = Field(..., description="The text content of the message to send to the agent.")
     jwt_token: str = Field(..., description="The JWT token for authentication.")
 
 
