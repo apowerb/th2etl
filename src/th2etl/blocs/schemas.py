@@ -50,3 +50,19 @@ class ScriptBlocConfig(BaseBlocConfig):
     """Configuration for a bloc that executes a Python script."""
 
     script_path: str = Field(..., description="The path to the Python script to execute.")
+
+
+class RunAdkAgentsConfig(BaseBlocConfig):
+    """Configuration for running an ADK agent."""
+
+    url: str = Field(..., description="The API endpoint URL for the ADK agent.")
+    agent_id: str = Field(..., description="The ID of the agent to run.")
+    message: str = Field(..., description="The message to send to the agent.")
+    jwt_token: str = Field(..., description="The JWT token for authentication.")
+
+
+class RefreshWebhooksConfig(BaseBlocConfig):
+    """Configuration for refreshing webhooks."""
+
+    url: str = Field(..., description="The API endpoint URL for refreshing webhooks.")
+    jwt_token: str = Field(..., description="The JWT token for authentication.")

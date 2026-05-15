@@ -14,6 +14,8 @@ from th2etl.blocs import (
     CsvLoaderBloc,
     PostgresLoaderBloc,
     ApiLoaderBloc,
+    RunAdkAgentsBloc,
+    RefreshWebhooksBloc,
 )
 from th2etl.blocs.base import Bloc
 from th2etl.storage import DatabaseStorage
@@ -177,11 +179,21 @@ def _example_exporter_factory(name: str, config: dict[str, Any], dependencies: S
     return ExampleExporter(name=name, dependencies=dependencies, config=config)
 
 
+def _run_adk_agents_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
+    return RunAdkAgentsBloc(name=name, dependencies=dependencies, config=config)
+
+
+def _refresh_webhooks_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
+    return RefreshWebhooksBloc(name=name, dependencies=dependencies, config=config)
+
+
 register_bloc_factory("csv_loader", _csv_loader_factory)
 register_bloc_factory("postgres_loader", _postgres_loader_factory)
 register_bloc_factory("api_loader", _api_loader_factory)
 register_bloc_factory("example_transformer", _example_transformer_factory)
 register_bloc_factory("example_exporter", _example_exporter_factory)
+register_bloc_factory("run_adk_agents", _run_adk_agents_factory)
+register_bloc_factory("refresh_webhooks", _refresh_webhooks_factory)
 
 
 def build_example_pipeline() -> Pipeline:

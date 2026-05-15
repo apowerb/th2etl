@@ -33,6 +33,23 @@ The following loader blocs are available:
         - `headers` (optional): A dictionary of HTTP headers.
         - `json` (optional): A dictionary for the JSON request body.
 
+### Transformer Blocs
+
+The following transformer blocs are available:
+
+- `RunAdkAgentsBloc`: Runs an ADK agent via an API call.
+    - `bloc_type`: `run_adk_agents`
+    - **Config**:
+        - `url` (required): The API endpoint for the agent.
+        - `agent_id` (required): The ID of the agent to run.
+        - `message` (required): The message to send to the agent.
+        - `jwt_token` (required): The JWT token for authentication.
+- `RefreshWebhooksBloc`: Refreshes webhooks via an API call.
+    - `bloc_type`: `refresh_webhooks`
+    - **Config**:
+        - `url` (required): The API endpoint for refreshing webhooks.
+        - `jwt_token` (required): The JWT token for authentication.
+
 ## Usage
 
 Run the pipeline in the current process:
