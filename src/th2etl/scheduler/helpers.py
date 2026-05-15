@@ -5,11 +5,14 @@ import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Iterable, Sequence
+from pathlib import Path
 
-from th2etl.pipelines.pipeline import Pipeline, build_pipeline_from_database
+from th2etl.pipelines.pipeline import Pipeline, RunContext, build_pipeline_from_database
 from th2etl.storage import DatabaseStorage, TriggerRecord
+from th2etl.configs.settings import get_settings
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 FIELD_RANGES = {
     "minute": (0, 59),
@@ -105,19 +108,41 @@ class CronTrigger:
 
 
 class CronScheduler:
-    def __init__(self, pipeline: Pipeline, trigger: CronTrigger, name: str | None = None, trigger_name: str | None = None) -> None:
+    def __init__(self, pipeline: Pipeline, trigger: CronTrigger, name: str | None = None, trigger_name: str | None = None, settings: Settings | None = None) -> None:
         self.pipeline = pipeline
         self.trigger = trigger
         self.trigger_name = trigger_name
         self.name = name or pipeline.__class__.__name__
+        self.settings = settings
         self._next_run = self.trigger.next_run(datetime.now())
         logger.info(f"Initialized scheduler '{self.name}' with trigger '{trigger.expression}'. Next run at {self._next_run}")
 
     def run_once(self) -> None:
         start_at = datetime.now()
-        logger.info("Running scheduled pipeline %s at %s", self.name, start_at)
-        self.pipeline.execute()
-        self._next_run = self.trigger.next_run(start_at + timedelta(minutes=1))
+        logger.info("Executing scheduled pipeline '%s'", self.name)
+        
+        output_dir: Path | None = None
+        if self.settings and self.settings.pipelines_logs_dir:
+            run_timestamp = start_at.strftime("%Y%m%d_%H%M%S")
+            output_dir = self.settings.pipelines_logs_dir / self.name / run_timestamp
+        
+        run_context = RunContext(
+            scheduler_name=self.name,
+            trigger_name=self.trigger_name,
+            scheduled_at=start_at,
+            output_dir=output_dir,
+        )
+
+        try:
+            self.pipeline.execute(run_context)
+            duration = (datetime.now() - start_at).total_seconds()
+            logger.info("Successfully finished pipeline '%s' in %.2f seconds", self.name, duration)
+        except Exception:
+            duration = (datetime.now() - start_at).total_seconds()
+            logger.exception("Pipeline '%s' failed after %.2f seconds", self.name, duration)
+        finally:
+            # Always schedule the next run, even if the pipeline failed
+            self._next_run = self.trigger.next_run(start_at + timedelta(minutes=1))
 
     def run_pending(self) -> bool:
         now = datetime.now().replace(second=0, microsecond=0)
@@ -146,12 +171,13 @@ class CronScheduler:
 
 
 class SchedulerManager:
-    def __init__(self, schedulers: Sequence[CronScheduler] | None = None, max_workers: int = 5, check_interval_seconds: int = 30, storage: DatabaseStorage | None = None, refresh_interval_seconds: int = 60) -> None:
+    def __init__(self, schedulers: Sequence[CronScheduler] | None = None, max_workers: int = 5, check_interval_seconds: int = 30, storage: DatabaseStorage | None = None, refresh_interval_seconds: int = 60, settings: Settings | None = None) -> None:
         self.schedulers: list[CronScheduler] = list(schedulers or [])
         self.check_interval_seconds = check_interval_seconds
         self.refresh_interval_seconds = refresh_interval_seconds
         self.executor = ThreadPoolExecutor(max_workers=max_workers)
         self.storage = storage
+        self.settings = settings
         self._last_triggers_refresh = datetime.min
         self._last_schedulers_refresh = datetime.min
 
@@ -164,7 +190,7 @@ class SchedulerManager:
         futures: list[Future[None]] = []
         for scheduler in self.schedulers:
             if scheduler.next_run() <= now:
-                logger.info("Dispatching scheduled pipeline %s for execution", scheduler.name)
+                logger.info("Dispatching scheduled pipeline '%s' for execution", scheduler.name)
                 scheduler.schedule_next_run(now)
                 futures.append(self.executor.submit(scheduler.run_once))
         return futures
@@ -175,7 +201,7 @@ class SchedulerManager:
                 continue
 
             logger.info(
-                "Refreshing scheduler %s because trigger %s changed to '%s'",
+                "Refreshing scheduler '%s' because trigger '%s' changed to '%s'",
                 scheduler.name,
                 trigger_record.name,
                 trigger_record.cron_expression,
@@ -209,9 +235,10 @@ class SchedulerManager:
         try:
             new_scheduler = self._build_scheduler_from_record(scheduler_record)
         except Exception as exc:
-            logger.warning("Failed to refresh scheduler %s: %s", scheduler_record.name, exc)
+            logger.warning("Failed to refresh scheduler '%s': %s", scheduler_record.name, exc)
             return
 
+        logger.info("Updating existing scheduler '%s' with new settings", scheduler_record.name)
         existing.pipeline = new_scheduler.pipeline
         existing.trigger = new_scheduler.trigger
         existing.trigger_name = new_scheduler.trigger_name
@@ -230,6 +257,7 @@ class SchedulerManager:
             trigger=CronTrigger(trigger_record.cron_expression),
             name=scheduler_record.name,
             trigger_name=scheduler_record.trigger_name,
+            settings=self.settings,
         )
 
     def _refresh_triggers_from_database(self) -> None:
@@ -321,9 +349,16 @@ def load_scheduler_manager(
     max_workers: int = 5,
     check_interval_seconds: int = 30,
     refresh_interval_seconds: int = 60,
+    settings: Settings | None = None,
 ) -> SchedulerManager:
     logger.info("Loading scheduler manager from database.")
-    manager = SchedulerManager(max_workers=max_workers, check_interval_seconds=check_interval_seconds, storage=storage, refresh_interval_seconds=refresh_interval_seconds)
+    manager = SchedulerManager(
+        max_workers=max_workers,
+        check_interval_seconds=check_interval_seconds,
+        storage=storage,
+        refresh_interval_seconds=refresh_interval_seconds,
+        settings=settings,
+    )
     if hasattr(storage, "add_trigger_change_listener"):
         storage.add_trigger_change_listener(manager._on_trigger_change)
     
@@ -352,6 +387,7 @@ def load_scheduler_manager(
                 trigger=trigger,
                 name=scheduler.name,
                 trigger_name=scheduler.trigger_name,
+                settings=settings,
             )
         )
     
@@ -376,6 +412,7 @@ def start_scheduler_manager_from_database(
         max_workers=max_workers,
         check_interval_seconds=check_interval_seconds,
         refresh_interval_seconds=refresh_interval_seconds,
+        settings=settings,
     )
     manager.start()
 

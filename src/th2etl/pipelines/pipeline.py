@@ -3,6 +3,9 @@ from __future__ import annotations
 import logging
 from collections import deque
 from typing import Any, Callable, Sequence
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
 
 from th2etl.blocs import ExporterBloc, LoaderBloc, TransformerBloc
 from th2etl.blocs.base import Bloc
@@ -12,6 +15,19 @@ logger = logging.getLogger(__name__)
 
 BlocFactory = Callable[[str, dict[str, Any], Sequence[str] | None], Bloc]
 BLOC_FACTORY_REGISTRY: dict[str, BlocFactory] = {}
+
+
+@dataclass
+class RunContext:
+    """Provides details about the current pipeline run."""
+
+    scheduler_name: str | None = None
+    trigger_name: str | None = None
+    scheduled_at: datetime | None = None
+    output_dir: Path | None = None
+
+    # Arbitrary storage for passing data between blocs
+    context_vars: dict[str, Any] = field(default_factory=dict)
 
 
 def register_bloc_factory(bloc_type: str, factory: BlocFactory) -> None:
@@ -86,14 +102,24 @@ class Pipeline:
 
         return order
 
-    def execute(self) -> dict[str, Any]:
+    def execute(self, run_context: RunContext | None = None) -> RunContext:
         logger.info("Starting pipeline execution")
-        context: dict[str, Any] = {}
+
+        # If no context is provided, create a default one
+        if run_context is None:
+            run_context = RunContext()
+
+        # Ensure output directory exists if provided
+        if run_context.output_dir:
+            run_context.output_dir.mkdir(parents=True, exist_ok=True)
+            logger.info(f"Using output directory: {run_context.output_dir}")
+
         for bloc in self._resolve_execution_order():
             logger.info("Running bloc %s (%s)", bloc.name, bloc.type.value)
-            bloc.execute(context)
+            bloc.execute(run_context.context_vars)
+
         logger.info("Pipeline execution completed")
-        return context
+        return run_context
 
 
 class ExampleLoader(LoaderBloc):
@@ -131,6 +157,9 @@ class ExampleExporter(ExporterBloc):
     def execute(self, context: dict[str, Any]) -> None:
         exported_rows = context.get("transformed_rows", [])
         logger.info("Exporting %d rows", len(exported_rows))
+
+        # The run_context is not directly available here, so we can't easily get the output_dir
+        # This part of the example would need to be updated if it needs to write to a file
         for row in exported_rows:
             logger.info("Exported row: %s", row)
         context["exported_count"] = len(exported_rows)

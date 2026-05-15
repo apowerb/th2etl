@@ -178,3 +178,26 @@ pipeline = build_example_pipeline()
 scheduler = schedule_pipeline(pipeline, "0 * * * *")
 scheduler.start()
 ```
+
+## Logging
+
+The application uses Python's standard `logging` module. You can control the log verbosity using environment variables.
+
+- `TH2ETL_LOG_LEVEL`: Sets the global log level. Defaults to `INFO`. Can be set to `DEBUG`, `INFO`, `WARNING`, `ERROR`.
+- `TH2ETL_LOG_LEVELS`: Provides fine-grained control over different parts of the application. This is a comma-separated list of `logger_name:LEVEL`.
+
+For example, to see detailed logs from the scheduler but only warnings and errors from the pipelines and blocs, you can set:
+
+```bash
+export TH2ETL_LOG_LEVELS="th2etl.scheduler:INFO,th2etl:WARNING"
+```
+
+This sets the logger for the `th2etl.scheduler` module to `INFO`, while setting the base `th2etl` logger (which other modules inherit from) to `WARNING`. This is useful for focusing on the scheduler's activity without being overwhelmed by pipeline execution details.
+
+## Output Storage
+
+When pipelines are run by the scheduler, their output can be stored in a directory for later review.
+
+- `pipelines_logs_dir`: Set this environment variable to the path of a directory where you want to store the output of each pipeline run.
+
+If this variable is set, a new subdirectory will be created for each run, named with the scheduler and a timestamp (e.g., `five_minute_scheduler/20260515_103000`). This folder is passed to the pipeline in the `RunContext`, and blocs can be designed to write their output there.

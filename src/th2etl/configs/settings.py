@@ -1,19 +1,25 @@
 from functools import lru_cache
+from pathlib import Path
 from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
+    """ETL settings, loaded from environment variables or a .env file."""
+
+    # Database connection settings
     database_url: str | None = None
     database_host: str = "localhost"
     database_port: int = 5432
     database_name: str
     database_user: str
-    database_password: str
+    database_password: str = "secret"
     database_schema: str | None = None
     database_ssl_mode: str | None = None
+    
+    # Directory for pipeline run outputs
+    pipelines_logs_dir: Path | None = None
+    
     api_key: str
     log_level: str = "INFO"
-    batch_size: int = 100
-    retry_attempts: int = 3
 
     class Config:
         env_file = ".env"
