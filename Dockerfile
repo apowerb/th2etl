@@ -12,7 +12,7 @@ COPY pyproject.toml ./
 
 # Install project dependencies using uv
 # --no-cache is used to keep the image size small
-RUN uv pip sync --no-cache pyproject.toml
+RUN uv pip sync --no-cache --system pyproject.toml
 
 # Copy the rest of the application source code
 COPY ./src ./src
