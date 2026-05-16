@@ -232,3 +232,6 @@ pipelines_logs/
 
 # Output directory for pipeline runs
 pipeline_runs/
+
+# Notebooks
+notebooks/

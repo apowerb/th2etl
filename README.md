@@ -268,3 +268,66 @@ When pipelines are run by the scheduler, their output can be stored in a directo
 - `pipelines_logs_dir`: Set this environment variable to the path of a directory where you want to store the output of each pipeline run.
 
 If this variable is set, a new subdirectory will be created for each run, named with the scheduler and a timestamp (e.g., `five_minute_scheduler/20260515_103000`). This folder is passed to the pipeline in the `RunContext`, and blocs can be designed to write their output there.
+
+## API Client
+
+A generic `HttpClient` is available in `th2etl.helpers.client` to simplify making API calls to external services.
+
+### Usage
+
+You can create a client for any service by providing its base URL.
+
+```python
+from th2etl.helpers.client import HttpClient
+
+# Create a client for the JSONPlaceholder API
+client = HttpClient(base_url="https://jsonplaceholder.typicode.com")
+
+# Make a GET request
+posts = client.get("/posts")
+print(f"Found {len(posts)} posts.")
+
+# Make a POST request
+new_post = {
+    "title": "foo",
+    "body": "bar",
+    "userId": 1,
+}
+created_post = client.post("/posts", json_data=new_post)
+print(f"Created new post with ID: {created_post['id']}")
+```
+
+You can also include an authentication token when creating the client:
+
+```python
+secure_client = HttpClient(
+    base_url="https://api.example.com",
+    auth_token="your-secret-token"
+)
+```
+
+### th2etl API Client
+
+A dedicated client for the `th2etl` API is available in `th2etl.helpers.th2etl_client`. This client provides convenient methods for all the API's endpoints.
+
+```python
+from th2etl.helpers.th2etl_client import Th2etlClient
+
+client = Th2etlClient()
+
+# Check the health of the service
+health = client.health_check()
+print(f"Service status: {health['status']}")
+
+# Create a new bloc
+new_bloc = client.create_bloc(
+    name="my-new-bloc",
+    bloc_type="csv_loader",
+    config={"file_path": "data.csv"},
+)
+print(f"Created bloc: {new_bloc}")
+
+# List all pipelines
+pipelines = client.list_pipelines()
+print(f"Found {len(pipelines)} pipelines.")
+```
