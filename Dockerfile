@@ -7,12 +7,18 @@ WORKDIR /app
 # Install uv, the Python package installer
 RUN pip install uv
 
+# Create a virtual environment
+RUN uv venv
+
+# Add the virtual environment to the PATH
+ENV PATH="/app/.venv/bin:$PATH"
+
 # Copy the dependency definition files
 COPY pyproject.toml ./
 
-# Install project dependencies using uv
+# Install project dependencies into the virtual environment
 # --no-cache is used to keep the image size small
-RUN uv pip sync --no-cache --system pyproject.toml
+RUN uv pip sync --no-cache pyproject.toml
 
 # Copy the rest of the application source code
 COPY ./src ./src
