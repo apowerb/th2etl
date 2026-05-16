@@ -25,6 +25,9 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: th2farid/th2etl
+          tags: |
+            # Create a Docker tag from the Git tag
+            type=semver,pattern={{version}}
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
