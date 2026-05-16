@@ -1,10 +1,10 @@
 [project]
 name = "th2etl"
 version = "0.1.0"
-description = "Add your description here"
+description = "A flexible ETL framework with a database-driven scheduler, extensible pipeline blocs, and a RESTful API."
 readme = "README.md"
 authors = [
-    { name = "thaink2", email = "farid.azouaou@thaink2.com" }
+    { name = "thaink2", email = "contact@thaink2.com" }
 ]
 requires-python = ">=3.10"
 dependencies = [

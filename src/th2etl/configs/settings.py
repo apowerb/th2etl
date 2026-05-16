@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     th2etl_output_dir: Path | None = None
     
     # JWT settings for token generation
-    encrypt_key: str = Field(..., description="Secret key for signing JWT tokens")
+    encrypt_key: str | None = Field(None, description="Secret key for signing JWT tokens")
     jwt_algorithm: str = Field("HS256", description="Algorithm used for JWT encoding")
     jwt_expiry_minutes: int = Field(60, description="Token expiry time in minutes")
 

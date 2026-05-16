@@ -41,35 +41,44 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     — previously this function silently overwrote the field, producing
     "fake" access tokens that the refresh endpoint then rejected (B8 fix).
     """
+    if not settings.encrypt_key:
+        raise ValueError("Cannot create access token without an 'encrypt_key' set in the configuration.")
+
     to_encode = data.copy()
 
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
     else:
-        expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(timezone.utc) + timedelta(minutes=settings.jwt_expiry_minutes)
 
     to_encode["exp"] = expire
     to_encode.setdefault("type", "access")
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, settings.encrypt_key, algorithm=settings.jwt_algorithm)
 
     return encoded_jwt
 
 
 def create_refresh_token(data: dict) -> str:
     """Create a JWT refresh token"""
+    if not settings.encrypt_key:
+        raise ValueError("Cannot create refresh token without an 'encrypt_key' set in the configuration.")
+
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
 
     to_encode.update({"exp": expire, "type": "refresh"})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, settings.encrypt_key, algorithm=settings.jwt_algorithm)
 
     return encoded_jwt
 
 
 def decode_access_token(token: str) -> Dict:
     """Decode and validate a JWT token"""
+    if not settings.encrypt_key:
+        raise ValueError("Cannot decode access token without an 'encrypt_key' set in the configuration.")
+
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, settings.encrypt_key, algorithms=[settings.jwt_algorithm])
 
         # Verify token type
         if payload.get("type") != "access":
@@ -90,8 +99,11 @@ def decode_access_token(token: str) -> Dict:
 
 def decode_refresh_token(token: str) -> Dict:
     """Decode and validate a refresh token"""
+    if not settings.encrypt_key:
+        raise ValueError("Cannot decode refresh token without an 'encrypt_key' set in the configuration.")
+
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        payload = jwt.decode(token, settings.encrypt_key, algorithms=[settings.jwt_algorithm])
 
         # Verify token type
         if payload.get("type") != "refresh":
@@ -113,10 +125,13 @@ def create_agent_refresh_token(data: dict, expires_days: int = AGENT_REFRESH_TOK
     """
     Create a refresh token for scheduled agent runs.
     """
+    if not settings.encrypt_key:
+        raise ValueError("Cannot create agent refresh token without an 'encrypt_key' set in the configuration.")
+
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + timedelta(days=expires_days)
     to_encode.update({"exp": expire, "type": "agent_refresh"})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, settings.encrypt_key, algorithm=settings.jwt_algorithm)
     return encoded_jwt
 
 
@@ -125,17 +140,20 @@ def decode_agent_refresh_token(token: str) -> Dict:
     Decode and validate an agent refresh token.
 
     """
+    if not settings.encrypt_key:
+        raise ValueError("Cannot decode agent refresh token without an 'encrypt_key' set in the configuration.")
+
     try:
-        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        
+        payload = jwt.decode(token, settings.encrypt_key, algorithms=[settings.jwt_algorithm])
+
         if payload.get("type") != "agent_refresh":
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Invalid token type. Expected agent_refresh token.",
             )
-        
+
         return payload
-    
+
     except jwt.ExpiredSignatureError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -153,11 +171,11 @@ def refresh_access_token_from_agent_refresh(refresh_token: str) -> str:
     """
     # Decode and validate refresh token
     payload = decode_agent_refresh_token(refresh_token)
-    
+
     # Extract data (excluding exp, type, iat)
     access_data = {k: v for k, v in payload.items() if k not in ["exp", "type", "iat"]}
-    
+
     # Create fresh access token
     access_token = create_access_token(access_data)
-    
+
     return access_token
