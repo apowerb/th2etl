@@ -1,6 +1,6 @@
 [project]
 name = "th2etl"
-version = "0.1.0"
+version = "0.0.1"
 description = "A flexible ETL framework with a database-driven scheduler, extensible pipeline blocs, and a RESTful API."
 readme = "README.md"
 authors = [
