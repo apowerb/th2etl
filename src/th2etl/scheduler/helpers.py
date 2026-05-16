@@ -6,6 +6,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Iterable, Sequence
 from pathlib import Path
+import threading
 
 from th2etl.pipelines.pipeline import Pipeline, build_pipeline_from_database
 from th2etl.pipelines.context import RunContext
@@ -182,6 +183,7 @@ class SchedulerManager:
         self.settings = settings
         self._last_triggers_refresh = datetime.min
         self._last_schedulers_refresh = datetime.min
+        self._stop_event = threading.Event()
 
     def add_scheduler(self, scheduler: CronScheduler) -> None:
         logger.info(f"Adding scheduler '{scheduler.name}' to manager.")
@@ -355,18 +357,25 @@ class SchedulerManager:
         if not self.schedulers:
             logger.warning("SchedulerManager started with no schedulers.")
         try:
-            while True:
+            while not self._stop_event.is_set():
                 logger.debug("SchedulerManager main loop tick.")
                 self._refresh_triggers_from_database()
                 self._refresh_schedulers_from_database()
                 futures = self.run_pending()
                 if futures:
                     logger.info("Dispatched %d scheduled pipeline(s)", len(futures))
-                time.sleep(self.check_interval_seconds)
+                # Wait for the check interval, but check for the stop event periodically
+                self._stop_event.wait(self.check_interval_seconds)
         except KeyboardInterrupt:
             logger.info("SchedulerManager stopped by keyboard interrupt")
         finally:
             self.executor.shutdown(wait=True)
+            logger.info("SchedulerManager has shut down.")
+
+    def stop(self) -> None:
+        """Signals the scheduler manager to stop."""
+        logger.info("SchedulerManager received stop signal.")
+        self._stop_event.set()
 
 
 def load_scheduler_manager(

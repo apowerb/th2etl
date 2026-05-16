@@ -9,39 +9,14 @@ from typing import Sequence
 
 import uvicorn
 
-from th2etl.pipelines.pipeline import run_pipeline
 from th2etl.configs.settings import get_settings
 from th2etl.scheduler.helpers import start_scheduler_manager_from_database
 from th2etl.storage import DatabaseStorage
 from th2etl.session.session import spawn_background_job
 from th2etl.main import app
+from th2etl.configs.logger import setup_logging
 
 logger = logging.getLogger(__name__)
-
-
-def configure_logging() -> None:
-    # Default log level from environment, fallback to INFO
-    default_level = os.environ.get("TH2ETL_LOG_LEVEL", "INFO").upper()
-    
-    # Basic config sets the root logger level and format
-    logging.basicConfig(
-        level=default_level,
-        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-
-    # Allow fine-grained log levels from a comma-separated environment variable
-    # Example: TH2ETL_LOG_LEVELS=th2etl.scheduler:INFO,th2etl:WARNING
-    log_levels_str = os.environ.get("TH2ETL_LOG_LEVELS")
-    if log_levels_str:
-        for logger_config in log_levels_str.split(","):
-            if ":" in logger_config:
-                logger_name, level_name = logger_config.split(":", 1)
-                level = logging.getLevelName(level_name.upper())
-                if isinstance(level, int):
-                    logging.getLogger(logger_name.strip()).setLevel(level)
-                else:
-                    logging.warning(f"Invalid log level '{level_name}' for logger '{logger_name.strip()}'")
 
 
 def parse_env_vars(env_vars: Sequence[str]) -> dict[str, str]:
@@ -55,7 +30,7 @@ def parse_env_vars(env_vars: Sequence[str]) -> dict[str, str]:
 
 
 def main() -> int:
-    configure_logging()
+    setup_logging()
 
     parser = argparse.ArgumentParser(description="th2etl ETL runner")
     parser.add_argument("--background", action="store_true", help="Run the pipeline or scheduler in a separate isolated session")

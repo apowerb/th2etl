@@ -218,18 +218,9 @@ __marimo__/
 .streamlit/secrets.toml
 
 # logs
-
+logs/
+*.log
 pipelines_logs/
-
-# Editor directories and files
-.idea/
-.vscode/
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
-
 # Output directory for pipeline runs
 pipeline_runs/
 

@@ -25,8 +25,12 @@ class Settings(BaseSettings):
     jwt_algorithm: str = Field("HS256", description="Algorithm used for JWT encoding")
     jwt_expiry_minutes: int = Field(60, description="Token expiry time in minutes")
 
+    # Logging configuration
+    log_dir: Path | None = Field(None, description="Directory to store log files.")
+    log_level: str = Field("INFO", description="Global log level (DEBUG, INFO, WARNING, ERROR).")
+    log_levels: str | None = Field(None, description="Fine-grained log levels (e.g., 'th2etl.scheduler:INFO,th2etl:WARNING').")
+
     api_key: str
-    log_level: str = "INFO"
 
     class Config:
         env_file = ".env"

@@ -40,7 +40,7 @@ The following transformer blocs are available:
 - `RunAdkAgentsBloc`: Runs an ADK agent via an API call.
     - `bloc_type`: `run_adk_agents`
     - **Config**:
-        - `url` (optional): The API endpoint for the agent. Defaults to the development server.
+        - `base_url` (required): The base URL of the agent API (e.g., `https://api-agent-dev.thaink2.fr`).
         - `agent_id` (required): The ID of the agent to run (e.g., `database_assistant`).
         - `user_id` (required): The user's ID (e.g., email), used for authentication.
         - `message_text` (required): The text message to send to the agent.
@@ -68,19 +68,21 @@ th2etl --serve-api --host 0.0.0.0 --port 8080
 
 The API documentation will be available at `http://127.0.0.1:8000/docs` when the server is running.
 
+When you run the API server, the scheduler manager will also start automatically in the background.
+
 ### Health Check
 
-You can monitor the status of the service, including its connection to the database, by sending a GET request to the `/health` endpoint.
+You can monitor the status of the service, including its connection to the database and the status of the scheduler, by sending a GET request to the `/health` endpoint.
 
 ```bash
 curl http://127.0.0.1:8000/health
 ```
 
-If the service is running and connected to the database, it will return a `200 OK` response with `{"status": "ok"}`. If the database connection fails, it will return a `503 Service Unavailable` error.
+If the service is running and all components are healthy, it will return a `200 OK` response. If any component is down, it will return a `503 Service Unavailable` error.
 
 ## Usage
 
-Run the scheduler in the current process:
+Run the scheduler as a standalone process:
 
 ```bash
 python -m th2etl.runner
@@ -248,18 +250,28 @@ scheduler.start()
 
 ## Logging
 
-The application uses Python's standard `logging` module. You can control the log verbosity using environment variables.
+The application uses Python's standard `logging` module. You can control the log verbosity and output location using environment variables.
 
-- `TH2ETL_LOG_LEVEL`: Sets the global log level. Defaults to `INFO`. Can be set to `DEBUG`, `INFO`, `WARNING`, `ERROR`.
-- `TH2ETL_LOG_LEVELS`: Provides fine-grained control over different parts of the application. This is a comma-separated list of `logger_name:LEVEL`.
+### Environment Variables
 
-For example, to see detailed logs from the scheduler but only warnings and errors from the pipelines and blocs, you can set:
+- `LOG_DIR`: If set to a path (e.g., `logs`), separate log files will be created in that directory for each main module (`scheduler.log`, `api.log`, etc.), along with a general `th2etl.log` file.
+- `LOG_LEVEL`: Sets the global log level. Defaults to `INFO`. Can be set to `DEBUG`, `INFO`, `WARNING`, `ERROR`.
+- `LOG_LEVELS`: Provides fine-grained control over different parts of the application. This is a comma-separated list of `logger_name:LEVEL`.
+
+### Example Usage
+
+To save logs to a `logs` directory with separate files for each module, you can set the following environment variables:
 
 ```bash
-export TH2ETL_LOG_LEVELS="th2etl.scheduler:INFO,th2etl:WARNING"
+export LOG_DIR="logs"
+export LOG_LEVELS="th2etl.scheduler:INFO,th2etl:WARNING"
 ```
 
-This sets the logger for the `th2etl.scheduler` module to `INFO`, while setting the base `th2etl` logger (which other modules inherit from) to `WARNING`. This is useful for focusing on the scheduler's activity without being overwhelmed by pipeline execution details.
+This configuration will:
+- Create a `logs` directory.
+- Create log files like `scheduler.log`, `api.log`, and `th2etl.log` inside it.
+- Log detailed messages from the scheduler to `scheduler.log`.
+- Only show warnings and errors from other modules in their respective files and the console.
 
 ## Output Storage
 

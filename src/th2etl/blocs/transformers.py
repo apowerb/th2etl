@@ -48,8 +48,12 @@ class RunAdkAgentsBloc(TransformerBloc):
             },
         }
 
+        
+        # Construct the full URL from the base_url
+        url = f"{self.config.base_url.rstrip('/')}/api/adk/run"
+
         try:
-            response = requests.post(self.config.url, headers=headers, json=payload)
+            response = requests.post(url, headers=headers, json=payload)
             response.raise_for_status()
             result = response.json()
             run_context.context_vars[f"{self.name}_result"] = result
