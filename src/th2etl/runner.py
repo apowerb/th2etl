@@ -7,11 +7,14 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+import uvicorn
+
 from th2etl.pipelines.pipeline import run_pipeline
 from th2etl.configs.settings import get_settings
 from th2etl.scheduler.helpers import start_scheduler_manager_from_database
 from th2etl.storage import DatabaseStorage
 from th2etl.session.session import spawn_background_job
+from th2etl.main import app
 
 logger = logging.getLogger(__name__)
 
@@ -62,17 +65,34 @@ def main() -> int:
         default=[],
         help="Additional environment variables for isolated session, use KEY=VALUE",
     )
-    parser.add_argument(
+
+    # Use a mutually exclusive group for commands
+    command_group = parser.add_mutually_exclusive_group()
+    command_group.add_argument(
         "--start-db-scheduler",
         action="store_true",
-        help="Load scheduler definitions from the database and run the scheduler manager",
+        help="Load scheduler definitions from the database and run the scheduler manager (default action).",
     )
-    parser.add_argument(
+    command_group.add_argument(
+        "--serve-api",
+        action="store_true",
+        help="Run the FastAPI server.",
+    )
+
+    # Scheduler-specific arguments
+    scheduler_group = parser.add_argument_group("Scheduler options")
+    scheduler_group.add_argument(
         "--scheduler-names",
         nargs="+",
         default=None,
         help="Optional list of scheduler names to load from the database",
     )
+
+    # API-specific arguments
+    api_group = parser.add_argument_group("API server options")
+    api_group.add_argument("--host", default="0.0.0.0", help="Host for the API server.")
+    api_group.add_argument("--port", default=8000, type=int, help="Port for the API server.")
+    
     parser.add_argument("--run-pipeline", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
 
@@ -82,7 +102,11 @@ def main() -> int:
 
     if args.background:
         extra_env = parse_env_vars(args.env)
-        if args.start_db_scheduler:
+        if args.serve_api:
+            command_args = ["--serve-api", f"--host={args.host}", f"--port={args.port}"]
+            process = spawn_background_job("th2etl.runner", command_args, extra_env=extra_env)
+            print(f"Started isolated background API server with PID {process.pid}")
+        else:  # Default for background is the scheduler
             command_args = ["--start-db-scheduler"]
             if args.scheduler_names:
                 command_args += ["--scheduler-names", *args.scheduler_names]
@@ -92,10 +116,6 @@ def main() -> int:
                 extra_env=extra_env,
             )
             print(f"Started isolated background DB scheduler with PID {process.pid}")
-            return 0
-
-        process = spawn_background_job("th2etl.runner", ["--run-pipeline"], extra_env=extra_env)
-        print(f"Started isolated background job with PID {process.pid}")
         return 0
 
     if args.env:
@@ -105,16 +125,17 @@ def main() -> int:
             print(f"  {key}={value}")
         os.environ.update(env_values)
 
-    if args.start_db_scheduler:
-        settings = get_settings()
-        with DatabaseStorage.from_settings(settings) as storage:
-            start_scheduler_manager_from_database(
-                storage,
-                scheduler_names=args.scheduler_names,
-            )
+    if args.serve_api:
+        uvicorn.run(app, host=args.host, port=args.port)
         return 0
 
-    run_pipeline()
+    # Default action is to start the scheduler
+    settings = get_settings()
+    with DatabaseStorage.from_settings(settings) as storage:
+        start_scheduler_manager_from_database(
+            storage,
+            scheduler_names=args.scheduler_names,
+        )
     return 0
 
 

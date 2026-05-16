@@ -100,6 +100,15 @@ class DatabaseStorage:
             except Exception as exc:
                 logger.warning("Trigger change listener failed: %s", exc)
 
+    def check_connection(self) -> bool:
+        """Checks if the database connection is active by executing a simple query."""
+        try:
+            self._query_one("SELECT 1")
+            return True
+        except Exception as e:
+            logger.error(f"Database connection check failed: {e}")
+            return False
+
     def close(self) -> None:
         self.connection.close()
 

@@ -50,15 +50,43 @@ The following transformer blocs are available:
         - `url` (required): The API endpoint for refreshing webhooks.
         - `user_id` (required): The user's ID (e.g., email), used for authentication.
 
+## API Service
+
+The application includes a FastAPI-based API for managing resources.
+
+To run the API server, use the `--serve-api` command:
+
+```bash
+th2etl --serve-api
+```
+
+You can also specify the host and port:
+
+```bash
+th2etl --serve-api --host 0.0.0.0 --port 8080
+```
+
+The API documentation will be available at `http://127.0.0.1:8000/docs` when the server is running.
+
+### Health Check
+
+You can monitor the status of the service, including its connection to the database, by sending a GET request to the `/health` endpoint.
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+If the service is running and connected to the database, it will return a `200 OK` response with `{"status": "ok"}`. If the database connection fails, it will return a `503 Service Unavailable` error.
+
 ## Usage
 
-Run the pipeline in the current process:
+Run the scheduler in the current process:
 
 ```bash
 python -m th2etl.runner
 ```
 
-Run the pipeline in a separate isolated session:
+Run the scheduler in a separate isolated session:
 
 ```bash
 python -m th2etl.runner --background
@@ -73,19 +101,19 @@ python -m th2etl.runner --background --env SOURCE=prod --env DESTINATION=warehou
 If the package is installed, use the CLI entry point:
 
 ```bash
-th2etl --background --env SOURCE=prod
+th2etl
 ```
 
-To start the database-backed scheduler manager directly from the command line:
+This will start the scheduler by default.
 
+To start the scheduler in the background:
 ```bash
-th2etl --start-db-scheduler
+th2etl --background
 ```
 
-Or in the background:
-
+To start the API service in the background:
 ```bash
-th2etl --start-db-scheduler --background
+th2etl --serve-api --background
 ```
 
 ## Quickstart
@@ -129,13 +157,13 @@ with DatabaseStorage.from_settings(s) as storage:
     storage.create_scheduler('example_scheduler','example_pipeline','every_hour')"
 ```
 
-5. Start the ETL service in the background:
+5. Start the ETL service:
 
 ```bash
-python -m th2etl.runner --background
+th2etl
 ```
 
-Or if the package is installed, run:
+Or in the background:
 
 ```bash
 th2etl --background
