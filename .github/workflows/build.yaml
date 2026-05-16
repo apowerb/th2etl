@@ -1,8 +1,6 @@
 name: Build and Push Docker Image
 
 on:
-  push:
-    branches: ["main"]
   release:
     types: [published]
   workflow_dispatch:
@@ -26,7 +24,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: thaink2/th2etl
+          images: th2farid/th2etl
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
