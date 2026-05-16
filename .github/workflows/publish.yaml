@@ -27,6 +27,13 @@ jobs:
       - name: Install uv
         run: pip install uv
 
+      - name: Get version from tag
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Update pyproject.toml version
+        run: sed -i "s/^version = .*/version = \"${{ steps.get_version.outputs.VERSION }}\"/" pyproject.toml
+
       - name: Build package
         run: uv build
 
