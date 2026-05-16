@@ -59,6 +59,9 @@ class RunAdkAgentsConfig(BaseBlocConfig):
     agent_id: str = Field(..., description="The ID of the agent to run.")
     user_id: str = Field(..., description="The user's ID, typically an email, used for the JWT 'sub' claim.")
     message_text: str = Field(..., description="The text content of the message to send to the agent.")
+    data: dict[str, Any] | None = Field(default_factory=dict, description="Optional dictionary of data to pass to the agent.")
+    run_mode: str = Field("run", description="The run mode for the agent.")
+    streaming: bool = Field(False, description="Whether to use streaming mode.")
 
 
 class RefreshWebhooksConfig(BaseBlocConfig):

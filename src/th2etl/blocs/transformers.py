@@ -38,19 +38,21 @@ class RunAdkAgentsBloc(TransformerBloc):
             "Accept": "application/json",
         }
 
+        # Construct the full URL from the base_url
+        url = f"{self.config.base_url.rstrip('/')}/api/adk/run"
+
         payload = {
-            "agent_id": self.config.agent_id,
+            "agent_name": self.config.agent_id,
             "user_id": self.config.user_id,
             "session_id": str(uuid.uuid4()),
+            "data": self.config.data,
+            "run_mode": self.config.run_mode,
+            "streaming": self.config.streaming,
             "new_message": {
                 "role": "user",
                 "parts": [{"text": self.config.message_text}],
             },
         }
-
-        
-        # Construct the full URL from the base_url
-        url = f"{self.config.base_url.rstrip('/')}/api/adk/run"
 
         try:
             response = requests.post(url, headers=headers, json=payload)
