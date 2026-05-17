@@ -140,7 +140,7 @@ The following exporter blocs are available:
 
 The application includes a FastAPI-based API for managing resources.
 
-To run the API server, use the `--serve-api` command:
+To run only the API server, use the `--serve-api` flag:
 
 ```bash
 th2etl --serve-api
@@ -154,7 +154,7 @@ th2etl --serve-api --host 0.0.0.0 --port 8080
 
 The API documentation will be available at `http://127.0.0.1:8000/docs` when the server is running.
 
-When you run the API server, the scheduler manager will also start automatically in the background.
+By default, running `th2etl` with no flags will start both the API server and the scheduler.
 
 ### Health Check
 
@@ -168,40 +168,49 @@ If the service is running and all components are healthy, it will return a `200 
 
 ## Usage
 
-Run the scheduler as a standalone process:
+The `th2etl` command-line interface allows you to run the API server, the scheduler, or both.
 
+### Running the Services
+
+- **Run both the API server and the scheduler (default):**
+  ```bash
+  th2etl
+  ```
+
+- **Run only the API server:**
+  ```bash
+  th2etl --serve-api
+  ```
+
+- **Run only the scheduler:**
+  ```bash
+  th2etl --run-scheduler
+  ```
+
+### Running in the Background
+
+You can run any combination of services in a separate, isolated background process using the `--background` flag.
+
+- **Run both services in the background:**
+  ```bash
+  th2etl --background
+  ```
+
+- **Run only the API server in the background:**
+  ```bash
+  th2etl --serve-api --background
+  ```
+
+- **Run only the scheduler in the background:**
+  ```bash
+  th2etl --run-scheduler --background
+  ```
+
+### Passing Environment Variables
+
+You can pass environment variables to an isolated session:
 ```bash
-python -m th2etl.runner
-```
-
-Run the scheduler in a separate isolated session:
-
-```bash
-python -m th2etl.runner --background
-```
-
-Pass environment variables into the isolated session:
-
-```bash
-python -m th2etl.runner --background --env SOURCE=prod --env DESTINATION=warehouse
-```
-
-If the package is installed, use the CLI entry point:
-
-```bash
-th2etl
-```
-
-This will start the scheduler by default.
-
-To start the scheduler in the background:
-```bash
-th2etl --background
-```
-
-To start the API service in the background:
-```bash
-th2etl --serve-api --background
+th2etl --run-scheduler --background --env SOURCE=prod --env DESTINATION=warehouse
 ```
 
 ## Quickstart
