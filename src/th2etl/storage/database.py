@@ -30,7 +30,7 @@ class BlocRecord:
 class PipelineRecord:
     id: int | None
     name: str
-    bloc_names: list[str]
+    stages: list[list[str]]
     description: str | None
     created_at: str
     updated_at: str
@@ -141,7 +141,7 @@ class DatabaseStorage:
                 CREATE TABLE IF NOT EXISTS {pipelines_table} (
                     id SERIAL PRIMARY KEY,
                     name TEXT NOT NULL UNIQUE,
-                    bloc_names JSONB NOT NULL,
+                    stages JSONB NOT NULL,
                     description TEXT,
                     created_at TIMESTAMPTZ NOT NULL,
                     updated_at TIMESTAMPTZ NOT NULL
@@ -195,7 +195,7 @@ class DatabaseStorage:
         return PipelineRecord(
             id=row["id"],
             name=row["name"],
-            bloc_names=row["bloc_names"],
+            stages=row["stages"],
             description=row["description"],
             created_at=row["created_at"].isoformat() if row["created_at"] else "",
             updated_at=row["updated_at"].isoformat() if row["updated_at"] else "",
@@ -333,17 +333,17 @@ class DatabaseStorage:
     def create_pipeline(
         self,
         name: str,
-        bloc_names: list[str],
+        stages: list[list[str]],
         description: str | None = None,
     ) -> PipelineRecord:
-        self._ensure_blocs_exist(bloc_names)
+        self._ensure_blocs_exist(stages)
         now = self._now()
         pipelines_table = self._table_name("pipelines")
         row = self._execute(
-            f"INSERT INTO {pipelines_table} (name, bloc_names, description, created_at, updated_at) VALUES (%s, %s, %s, %s, %s) RETURNING *",
+            f"INSERT INTO {pipelines_table} (name, stages, description, created_at, updated_at) VALUES (%s, %s, %s, %s, %s) RETURNING *",
             (
                 name,
-                self._serialize(bloc_names),
+                self._serialize(stages),
                 description,
                 now,
                 now,
@@ -365,23 +365,23 @@ class DatabaseStorage:
     def update_pipeline(
         self,
         name: str,
-        bloc_names: list[str] | None = None,
+        stages: list[list[str]] | None = None,
         description: str | None = None,
     ) -> PipelineRecord:
         existing = self.get_pipeline(name)
         if existing is None:
             raise ValueError(f"Pipeline {name!r} does not exist")
 
-        updated_bloc_names = bloc_names if bloc_names is not None else existing.bloc_names
-        self._ensure_blocs_exist(updated_bloc_names)
+        updated_stages = stages if stages is not None else existing.stages
+        self._ensure_blocs_exist(updated_stages)
         updated_description = description if description is not None else existing.description
         now = self._now()
 
         pipelines_table = self._table_name("pipelines")
         row = self._execute(
-            f"UPDATE {pipelines_table} SET bloc_names = %s, description = %s, updated_at = %s WHERE name = %s RETURNING *",
+            f"UPDATE {pipelines_table} SET stages = %s, description = %s, updated_at = %s WHERE name = %s RETURNING *",
             (
-                self._serialize(updated_bloc_names),
+                self._serialize(updated_stages),
                 updated_description,
                 now,
                 name,
@@ -530,10 +530,11 @@ class DatabaseStorage:
         self.connection.commit()
         return deleted > 0
 
-    def _ensure_blocs_exist(self, bloc_names: list[str]) -> None:
-        for bloc_name in bloc_names:
-            if self.get_bloc(bloc_name) is None:
-                raise ValueError(f"Bloc {bloc_name!r} does not exist")
+    def _ensure_blocs_exist(self, stages: list[list[str]]) -> None:
+        for stage in stages:
+            for bloc_name in stage:
+                if self.get_bloc(bloc_name) is None:
+                    raise ValueError(f"Bloc {bloc_name!r} does not exist")
 
     def _require_pipeline_id(self, pipeline_name: str) -> int:
         pipelines_table = self._table_name("pipelines")

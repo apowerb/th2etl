@@ -20,7 +20,7 @@ def create_pipeline(pipeline: PipelineCreateModel, db: DatabaseStorage = Depends
     try:
         return db.create_pipeline(
             name=pipeline.name,
-            bloc_names=pipeline.bloc_names,
+            stages=pipeline.stages,
             description=pipeline.description,
         )
     except ValueError as e:
@@ -42,7 +42,7 @@ def update_pipeline(name: str, pipeline: PipelineUpdateModel, db: DatabaseStorag
     try:
         return db.update_pipeline(
             name=name,
-            bloc_names=pipeline.bloc_names,
+            stages=pipeline.stages,
             description=pipeline.description,
         )
     except ValueError as e:

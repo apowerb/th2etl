@@ -23,10 +23,9 @@ class CsvLoaderBloc(LoaderBloc):
     def __init__(
         self,
         name: str,
-        dependencies: Sequence[str] | None = None,
         config: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(name=name, dependencies=dependencies)
+        super().__init__(name=name)
         self.config = CsvLoaderConfig(**(config or {}))
 
     def execute(self, run_context: RunContext) -> None:
@@ -51,10 +50,9 @@ class ApiLoaderBloc(LoaderBloc):
     def __init__(
         self,
         name: str,
-        dependencies: Sequence[str] | None = None,
         config: dict[str, Any] | None = None,
     ) -> None:
-        super().__init__(name=name, dependencies=dependencies)
+        super().__init__(name=name)
         self.config = ApiLoaderConfig(**(config or {}))
 
     def execute(self, run_context: RunContext) -> None:

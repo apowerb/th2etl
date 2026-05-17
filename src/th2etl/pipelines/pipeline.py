@@ -6,6 +6,7 @@ from typing import Any, Callable, Sequence
 from datetime import datetime
 from pathlib import Path
 import json
+import concurrent.futures
 
 from th2etl.blocs import (
     ExporterBloc,
@@ -32,11 +33,11 @@ def register_bloc_factory(bloc_type: str, factory: BlocFactory) -> None:
     BLOC_FACTORY_REGISTRY[bloc_type] = factory
 
 
-def build_bloc_from_record(name: str, bloc_type: str, dependencies: Sequence[str] | None, config: dict[str, Any] | None) -> Bloc:
+def build_bloc_from_record(name: str, bloc_type: str, config: dict[str, Any] | None) -> Bloc:
     factory = BLOC_FACTORY_REGISTRY.get(bloc_type)
     if factory is None:
         raise ValueError(f"No registered bloc factory for bloc_type={bloc_type!r}")
-    return factory(name, config or {}, dependencies)
+    return factory(name, config or {})
 
 
 def build_pipeline_from_database(storage: DatabaseStorage, pipeline_name: str) -> "Pipeline":
@@ -44,24 +45,27 @@ def build_pipeline_from_database(storage: DatabaseStorage, pipeline_name: str) -
     if pipeline_record is None:
         raise ValueError(f"Pipeline {pipeline_name!r} does not exist")
 
-    blocs: list[Bloc] = []
-    for bloc_name in pipeline_record.bloc_names:
-        bloc_record = storage.get_bloc(bloc_name)
-        if bloc_record is None:
-            raise ValueError(f"Bloc {bloc_name!r} referenced by pipeline {pipeline_name!r} does not exist")
-        bloc = build_bloc_from_record(
-            bloc_record.name,
-            bloc_record.bloc_type,
-            bloc_record.dependencies,
-            bloc_record.config,
-        )
-        blocs.append(bloc)
+    all_blocs: dict[str, Bloc] = {}
+    for stage in pipeline_record.stages:
+        for bloc_name in stage:
+            if bloc_name in all_blocs:
+                continue
+            bloc_record = storage.get_bloc(bloc_name)
+            if bloc_record is None:
+                raise ValueError(f"Bloc {bloc_name!r} referenced by pipeline {pipeline_name!r} does not exist")
+            bloc = build_bloc_from_record(
+                bloc_record.name,
+                bloc_record.bloc_type,
+                bloc_record.config,
+            )
+            all_blocs[bloc.name] = bloc
 
-    return Pipeline(blocs)
+    return Pipeline(pipeline_record.stages, list(all_blocs.values()))
 
 
 class Pipeline:
-    def __init__(self, blocs: Sequence[Bloc] | None = None) -> None:
+    def __init__(self, stages: list[list[str]], blocs: Sequence[Bloc] | None = None) -> None:
+        self.stages = stages
         self.blocs: dict[str, Bloc] = {}
         if blocs:
             for bloc in blocs:
@@ -71,34 +75,6 @@ class Pipeline:
         if bloc.name in self.blocs:
             raise ValueError(f"A bloc named {bloc.name!r} is already registered.")
         self.blocs[bloc.name] = bloc
-
-    def _resolve_execution_order(self) -> list[Bloc]:
-        incoming: dict[str, int] = {name: 0 for name in self.blocs}
-        outbound: dict[str, set[str]] = {name: set() for name in self.blocs}
-
-        for bloc in self.blocs.values():
-            for dependency in bloc.dependencies:
-                if dependency not in self.blocs:
-                    raise ValueError(f"Dependency {dependency!r} for bloc {bloc.name!r} is not registered.")
-                outbound[dependency].add(bloc.name)
-                incoming[bloc.name] += 1
-
-        queue = deque(name for name, count in incoming.items() if count == 0)
-        order: list[Bloc] = []
-
-        while queue:
-            name = queue.popleft()
-            order.append(self.blocs[name])
-            for child_name in outbound[name]:
-                incoming[child_name] -= 1
-                if incoming[child_name] == 0:
-                    queue.append(child_name)
-
-        if len(order) != len(self.blocs):
-            missing = sorted(name for name, count in incoming.items() if count > 0)
-            raise ValueError(f"Detected a cycle or unresolved dependencies: {missing}")
-
-        return order
 
     def execute(self, run_context: RunContext | None = None) -> RunContext:
         if run_context is None:
@@ -112,17 +88,37 @@ class Pipeline:
             run_context.output_dir.mkdir(parents=True, exist_ok=True)
             logger.info(f"Using output directory: {run_context.output_dir}")
 
-        for bloc in self._resolve_execution_order():
-            logger.info("Running bloc %s (%s)", bloc.name, bloc.type.value)
-            bloc.execute(run_context)
+        for i, stage in enumerate(self.stages):
+            logger.info(f"Executing stage {i + 1}/{len(self.stages)}")
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                futures = []
+                for bloc_name in stage:
+                    bloc = self.blocs.get(bloc_name)
+                    if bloc is None:
+                        raise ValueError(f"Bloc {bloc_name!r} not found in pipeline.")
+                    
+                    logger.info("Submitting bloc %s (%s) for execution", bloc.name, bloc.type.value)
+                    futures.append(executor.submit(bloc.execute, run_context))
+                
+                # Wait for all blocs in the current stage to complete
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        future.result()  # Raise any exceptions from the bloc execution
+                    except Exception as e:
+                        logger.error(f"An error occurred during bloc execution: {e}")
+                        # Depending on desired behavior, you might want to cancel other futures
+                        # and stop the pipeline execution here.
+                        raise
+
+            logger.info(f"Stage {i + 1} completed.")
             
         logger.info("Pipeline execution completed%s", execution_id)
         return run_context
 
 
 class ExampleTransformer(TransformerBloc):
-    def __init__(self, name: str = "example_transformer", dependencies: Sequence[str] | None = None, config: dict[str, Any] | None = None) -> None:
-        super().__init__(name=name, dependencies=dependencies)
+    def __init__(self, name: str = "example_transformer", config: dict[str, Any] | None = None) -> None:
+        super().__init__(name=name)
         self.config = ExampleTransformerConfig(**(config or {}))
 
     def execute(self, run_context: RunContext) -> None:
@@ -139,8 +135,8 @@ class ExampleTransformer(TransformerBloc):
 
 
 class ExampleExporter(ExporterBloc):
-    def __init__(self, name: str = "example_exporter", dependencies: Sequence[str] | None = None, config: dict[str, Any] | None = None) -> None:
-        super().__init__(name=name, dependencies=dependencies)
+    def __init__(self, name: str = "example_exporter", config: dict[str, Any] | None = None) -> None:
+        super().__init__(name=name)
         self.config = ExampleExporterConfig(**(config or {}))
 
     def execute(self, run_context: RunContext) -> None:
@@ -159,32 +155,32 @@ class ExampleExporter(ExporterBloc):
         run_context.context_vars["exported_count"] = len(exported_rows)
 
 
-def _csv_loader_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
-    return CsvLoaderBloc(name=name, dependencies=dependencies, config=config)
+def _csv_loader_factory(name: str, config: dict[str, Any]) -> Bloc:
+    return CsvLoaderBloc(name=name, config=config)
 
 
-def _postgres_loader_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
-    return PostgresLoaderBloc(name=name, dependencies=dependencies, config=config)
+def _postgres_loader_factory(name: str, config: dict[str, Any]) -> Bloc:
+    return PostgresLoaderBloc(name=name, config=config)
 
 
-def _api_loader_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
-    return ApiLoaderBloc(name=name, dependencies=dependencies, config=config)
+def _api_loader_factory(name: str, config: dict[str, Any]) -> Bloc:
+    return ApiLoaderBloc(name=name, config=config)
 
 
-def _example_transformer_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
-    return ExampleTransformer(name=name, dependencies=dependencies, config=config)
+def _example_transformer_factory(name: str, config: dict[str, Any]) -> Bloc:
+    return ExampleTransformer(name=name, config=config)
 
 
-def _example_exporter_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
-    return ExampleExporter(name=name, dependencies=dependencies, config=config)
+def _example_exporter_factory(name: str, config: dict[str, Any]) -> Bloc:
+    return ExampleExporter(name=name, config=config)
 
 
-def _run_adk_agents_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
-    return RunAdkAgentsBloc(name=name, dependencies=dependencies, config=config)
+def _run_adk_agents_factory(name: str, config: dict[str, Any]) -> Bloc:
+    return RunAdkAgentsBloc(name=name, config=config)
 
 
-def _refresh_webhooks_factory(name: str, config: dict[str, Any], dependencies: Sequence[str] | None) -> Bloc:
-    return RefreshWebhooksBloc(name=name, dependencies=dependencies, config=config)
+def _refresh_webhooks_factory(name: str, config: dict[str, Any]) -> Bloc:
+    return RefreshWebhooksBloc(name=name, config=config)
 
 
 register_bloc_factory("csv_loader", _csv_loader_factory)
@@ -199,10 +195,17 @@ register_bloc_factory("refresh_webhooks", _refresh_webhooks_factory)
 def build_example_pipeline() -> Pipeline:
     # This function is now for demonstration and may not be used directly by the scheduler
     # if all pipelines are defined in the database.
-    transformer = ExampleTransformer(dependencies=["my_csv_loader"])
-    exporter = ExampleExporter(dependencies=["my_transformer"])
     loader = CsvLoaderBloc(name="my_csv_loader", config={"file_path": "path/to/your/data.csv"})
-    return Pipeline([loader, transformer, exporter])
+    transformer = ExampleTransformer(name="my_transformer")
+    exporter = ExampleExporter(name="my_exporter")
+    
+    stages = [
+        ["my_csv_loader"],
+        ["my_transformer"],
+        ["my_exporter"],
+    ]
+    
+    return Pipeline(stages, [loader, transformer, exporter])
 
 
 def run_pipeline() -> None:

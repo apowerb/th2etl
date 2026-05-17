@@ -23,10 +23,9 @@ class PostgresLoaderBloc(LoaderBloc):
         self,
         name: str,
         table_name: str,
-        dependencies: list[str] | None = None,
         schema: str | None = None,
     ) -> None:
-        super().__init__(name, dependencies)
+        super().__init__(name)
         self.table_name = table_name
         self.schema = schema
 
@@ -55,12 +54,13 @@ class PostgresExporterBloc(ExporterBloc):
         self,
         name: str,
         table_name: str,
-        dependencies: list[str],
+        source_bloc: str,
         schema: str | None = None,
         if_exists: str = "replace",
     ) -> None:
-        super().__init__(name, dependencies)
+        super().__init__(name)
         self.table_name = table_name
+        self.source_bloc = source_bloc
         self.schema = schema
         self.if_exists = if_exists
 
@@ -72,15 +72,10 @@ class PostgresExporterBloc(ExporterBloc):
         db_settings = run_context.get_database_settings()
         engine = create_engine(db_settings.database_dsn)
         
-        # This exporter assumes it has exactly one dependency, which provides the data to export.
-        if not self.dependencies:
-            raise ValueError("PostgresExporterBloc requires at least one dependency.")
-        
-        data_source_bloc = self.dependencies[0]
-        df = run_context.get_data(data_source_bloc)
+        df = run_context.get_data(self.source_bloc)
         
         if df is None:
-            raise ValueError(f"No data found for dependency: {data_source_bloc}")
+            raise ValueError(f"No data found for source bloc: {self.source_bloc}")
             
         with engine.connect() as connection:
             df.to_sql(

@@ -15,9 +15,8 @@ class BlocType(str, Enum):
 
 
 class Bloc(ABC):
-    def __init__(self, name: str, dependencies: Sequence[str] | None = None) -> None:
+    def __init__(self, name: str) -> None:
         self.name = name
-        self.dependencies = list(dependencies) if dependencies else []
 
     @property
     @abstractmethod
