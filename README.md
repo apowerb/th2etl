@@ -3,13 +3,80 @@ thaink2 in house built ETL and automatisation library
 
 ## Design
 
-A pipeline is modeled as a set of interdependent blocs. Each bloc is one of:
+A pipeline is modeled as a series of stages, where each stage contains one or more blocs.
 
-- `LoaderBloc` — loads or extracts raw data
-- `TransformerBloc` — transforms data between stages
-- `ExporterBloc` — exports or writes output
+- **Stages** are executed sequentially. The next stage only begins after all blocs in the current stage have completed successfully.
+- **Blocs** within the same stage are executed in parallel, allowing for significant performance improvements for independent tasks.
 
-Dependencies between blocs are resolved before execution, so the pipeline runs in dependency order.
+The execution flow is defined by the structure of the `stages` list in the pipeline's definition.
+
+### Pipeline Structure
+
+A pipeline's structure is defined as a list of stages. Each stage is a list of bloc names that will be executed in that stage.
+
+-   **Sequential Stages**: The stages are executed in the order they appear in the list. The pipeline will not proceed to the next stage until all blocs in the current stage have completed successfully.
+-   **Parallel Blocs**: All blocs within a single stage are executed concurrently.
+
+This model provides explicit control over both sequential and parallel execution steps in your ETL process.
+
+**Example Structure:**
+
+A pipeline defined with the following stages:
+
+```json
+[
+    ["load_from_api"],
+    ["transform_data_a", "transform_data_b"],
+    ["aggregate_results"],
+    ["export_to_db", "export_to_file"]
+]
+```
+
+...will have the following execution flow:
+
+**Execution Flow Diagram:**
+
+```mermaid
+graph TD
+    subgraph Stage 1: Load
+        direction LR
+        Load[load_from_api]
+    end
+
+    subgraph Stage 2: Transform
+        direction LR
+        T1[transform_data_a]
+        T2[transform_data_b]
+    end
+    
+    subgraph Stage 3: Aggregate
+        direction LR
+        Agg[aggregate_results]
+    end
+
+    subgraph Stage 4: Export
+        direction LR
+        E1[export_to_db]
+        E2[export_to_file]
+    end
+
+    Load --> T1
+    Load --> T2
+    T1 --> Agg
+    T2 --> Agg
+    Agg --> E1
+    Agg --> E2
+```
+
+### Blocs
+
+Each bloc is one of:
+
+- `LoaderBloc` — loads or extracts raw data.
+- `TransformerBloc` — transforms data between stages.
+- `ExporterBloc` — exports or writes output.
+
+Data is passed between blocs via a shared `RunContext` object, which acts as an in-memory data store for the duration of a pipeline run.
 
 ### Loader Blocs
 
@@ -23,7 +90,8 @@ The following loader blocs are available:
 - `PostgresLoaderBloc`: Loads data from a PostgreSQL database.
     - `bloc_type`: `postgres_loader`
     - **Config**:
-        - `query` (required): The SQL query to execute.
+        - `table_name` (required): The name of the table to load.
+        - `schema` (optional): The database schema.
 - `ApiLoaderBloc`: Loads data from a web API.
     - `bloc_type`: `api_loader`
     - **Config**:
@@ -40,15 +108,27 @@ The following transformer blocs are available:
 - `RunAdkAgentsBloc`: Runs an ADK agent via an API call.
     - `bloc_type`: `run_adk_agents`
     - **Config**:
-        - `base_url` (required): The base URL of the agent API (e.g., `https://api-agent-dev.thaink2.fr`).
-        - `agent_id` (required): The ID of the agent to run (e.g., `database_assistant`).
-        - `user_id` (required): The user's ID (e.g., email), used for authentication.
-        - `message_text` (required): The text message to send to the agent.
+        - `base_url` (required): The base URL of the agent API.
+        - `agent_id` (required): The ID of the agent to run.
+        - `user_id` (required): The user's ID for authentication.
+        - `message_text` (required): The message to send to the agent.
 - `RefreshWebhooksBloc`: Refreshes webhooks via an API call.
     - `bloc_type`: `refresh_webhooks`
     - **Config**:
         - `url` (required): The API endpoint for refreshing webhooks.
-        - `user_id` (required): The user's ID (e.g., email), used for authentication.
+        - `user_id` (required): The user's ID for authentication.
+
+### Exporter Blocs
+
+The following exporter blocs are available:
+
+- `PostgresExporterBloc`: Exports data to a PostgreSQL table.
+    - `bloc_type`: `postgres_exporter`
+    - **Config**:
+        - `table_name` (required): The name of the destination table.
+        - `source_bloc` (required): The name of the bloc providing the data to export.
+        - `schema` (optional): The database schema.
+        - `if_exists` (optional): How to behave if the table already exists (`fail`, `replace`, or `append`). Default is `replace`.
 
 ## API Service
 
@@ -122,54 +202,54 @@ th2etl --serve-api --background
 
 Create pipeline metadata from the command line and then start the ETL service.
 
-1. Set your PostgreSQL database settings in environment variables:
+1.  Set your PostgreSQL database settings in environment variables:
 
-```powershell
-$env:DATABASE_HOST = "localhost"
-$env:DATABASE_PORT = "5432"
-$env:DATABASE_NAME = "th2etl"
-$env:DATABASE_USER = "etl_user"
-$env:DATABASE_PASSWORD = "secret"
-```
+    ```powershell
+    $env:DATABASE_HOST = "localhost"
+    $env:DATABASE_PORT = "5432"
+    $env:DATABASE_NAME = "th2etl"
+    $env:DATABASE_USER = "etl_user"
+    $env:DATABASE_PASSWORD = "secret"
+    ```
 
-2. Create blocs in the database:
+2.  Create blocs in the database:
 
-```powershell
-python -c "from th2etl import DatabaseStorage; from th2etl.configs.settings import get_settings; s = get_settings();
-with DatabaseStorage.from_settings(s) as storage:
-    storage.create_bloc('example_loader','example_loader',dependencies=[],config={'source':'csv'})
-    storage.create_bloc('example_transformer','example_transformer',dependencies=['example_loader'],config={'factor':2})
-    storage.create_bloc('example_exporter','example_exporter',dependencies=['example_transformer'],config={'destination':'stdout'})"
-```
+    ```powershell
+    python -c "from th2etl import DatabaseStorage; from th2etl.configs.settings import get_settings; s = get_settings();
+    with DatabaseStorage.from_settings(s) as storage:
+        storage.create_bloc('example_loader', 'csv_loader', config={'file_path': 'data.csv'})
+        storage.create_bloc('transformer_a', 'example_transformer', config={'factor': 2})
+        storage.create_bloc('transformer_b', 'example_transformer', config={'factor': 3})
+        storage.create_bloc('example_exporter', 'postgres_exporter', config={'table_name': 'processed_data', 'source_bloc': 'transformer_a'})"
+    ```
 
-3. Create a trigger for your pipeline:
+3.  Create a trigger for your pipeline:
 
-```powershell
-python -c "from th2etl import DatabaseStorage; from th2etl.configs.settings import get_settings; s = get_settings();
-with DatabaseStorage.from_settings(s) as storage:
-    storage.create_trigger('every_hour','example_pipeline','0 * * * *')"
-```
+    ```powershell
+    python -c "from th2etl import DatabaseStorage; from th2etl.configs.settings import get_settings; s = get_settings();
+    with DatabaseStorage.from_settings(s) as storage:
+        storage.create_trigger('every_hour', 'example_pipeline', '0 * * * *')"
+    ```
 
-4. Create the pipeline and optional scheduler:
+4.  Create the pipeline with stages for parallel execution:
 
-```powershell
-python -c "from th2etl import DatabaseStorage; from th2etl.configs.settings import get_settings; s = get_settings();
-with DatabaseStorage.from_settings(s) as storage:
-    storage.create_pipeline('example_pipeline',['example_loader','example_transformer','example_exporter'])
-    storage.create_scheduler('example_scheduler','example_pipeline','every_hour')"
-```
+    ```powershell
+    python -c "from th2etl import DatabaseStorage; from th2etl.configs.settings import get_settings; s = get_settings();
+    with DatabaseStorage.from_settings(s) as storage:
+        stages = [
+            ['example_loader'],
+            ['transformer_a', 'transformer_b'],
+            ['example_exporter']
+        ]
+        storage.create_pipeline('example_pipeline', stages=stages)
+        storage.create_scheduler('example_scheduler', 'example_pipeline', 'every_hour')"
+    ```
 
-5. Start the ETL service:
+5.  Start the ETL service:
 
-```bash
-th2etl
-```
-
-Or in the background:
-
-```bash
-th2etl --background
-```
+    ```bash
+    th2etl
+    ```
 
 ## Persistent Storage
 
@@ -181,10 +261,17 @@ from th2etl.configs.settings import get_settings
 
 settings = get_settings()
 with DatabaseStorage.from_settings(settings) as storage:
-    storage.create_bloc("example_loader", "example_loader", dependencies=[], config={"source": "csv"})
-    storage.create_bloc("example_transformer", "example_transformer", dependencies=["example_loader"], config={"factor": 2})
-    storage.create_bloc("example_exporter", "example_exporter", dependencies=["example_transformer"], config={"destination": "stdout"})
-    storage.create_pipeline("example_pipeline", ["example_loader", "example_transformer", "example_exporter"])
+    storage.create_bloc("example_loader", "csv_loader", config={"file_path": "data.csv"})
+    storage.create_bloc("transformer_a", "example_transformer", config={"factor": 2})
+    storage.create_bloc("transformer_b", "example_transformer", config={"factor": 3})
+    storage.create_bloc("example_exporter", "postgres_exporter", config={"table_name": "processed_data", "source_bloc": "transformer_a"})
+    
+    stages = [
+        ["example_loader"],
+        ["transformer_a", "transformer_b"],
+        ["example_exporter"],
+    ]
+    storage.create_pipeline("example_pipeline", stages=stages)
     storage.create_trigger("every_hour", "example_pipeline", "0 * * * *")
     storage.create_scheduler("example_scheduler", "example_pipeline", "every_hour")
 
