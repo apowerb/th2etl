@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
 
 from th2etl.storage import DatabaseStorage
 from th2etl.configs.settings import get_settings
+from th2etl.schemas.pipelines import PipelineCreateModel, PipelineUpdateModel
 
 router = APIRouter()
 
@@ -13,14 +13,7 @@ def get_db():
     with DatabaseStorage.from_settings(settings) as db:
         yield db
 
-class PipelineCreateModel(BaseModel):
-    name: str = Field(..., description="The unique name of the pipeline.")
-    bloc_names: list[str] = Field(..., description="A list of bloc names included in the pipeline.")
-    description: str | None = Field(None, description="An optional description of the pipeline.")
 
-class PipelineUpdateModel(BaseModel):
-    bloc_names: list[str] | None = Field(None, description="The list of bloc names in the pipeline.")
-    description: str | None = Field(None, description="The description of the pipeline.")
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_pipeline(pipeline: PipelineCreateModel, db: DatabaseStorage = Depends(get_db)):

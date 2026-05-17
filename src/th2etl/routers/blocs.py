@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-from typing import Any
-
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
 
 from th2etl.storage import DatabaseStorage
 from th2etl.configs.settings import get_settings
+from th2etl.schemas.blocs import BlocCreateModel, BlocUpdateModel
 
 router = APIRouter()
 
@@ -15,18 +13,7 @@ def get_db():
     with DatabaseStorage.from_settings(settings) as db:
         yield db
 
-class BlocCreateModel(BaseModel):
-    name: str = Field(..., description="The unique name of the bloc.")
-    bloc_type: str = Field(..., description="The type of the bloc (e.g., csv_loader, script_bloc).")
-    dependencies: list[str] | None = Field(None, description="A list of bloc names that this bloc depends on.")
-    config: dict[str, Any] | None = Field(None, description="The configuration for the bloc.")
-    description: str | None = Field(None, description="An optional description of the bloc.")
 
-class BlocUpdateModel(BaseModel):
-    bloc_type: str | None = Field(None, description="The type of the bloc.")
-    dependencies: list[str] | None = Field(None, description="The list of dependencies.")
-    config: dict[str, Any] | None = Field(None, description="The configuration for the bloc.")
-    description: str | None = Field(None, description="The description of the bloc.")
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_bloc(bloc: BlocCreateModel, db: DatabaseStorage = Depends(get_db)):

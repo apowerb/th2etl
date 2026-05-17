@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
 
 from th2etl.storage import DatabaseStorage
 from th2etl.configs.settings import get_settings
+from th2etl.schemas.triggers import TriggerCreateModel, TriggerUpdateModel
 
 router = APIRouter()
 
@@ -13,16 +13,7 @@ def get_db():
     with DatabaseStorage.from_settings(settings) as db:
         yield db
 
-class TriggerCreateModel(BaseModel):
-    name: str = Field(..., description="The unique name of the trigger.")
-    pipeline_name: str = Field(..., description="The name of the pipeline this trigger is for.")
-    cron_expression: str = Field(..., description="The cron expression for the trigger schedule.")
-    description: str | None = Field(None, description="An optional description of the trigger.")
 
-class TriggerUpdateModel(BaseModel):
-    pipeline_name: str | None = Field(None, description="The name of the pipeline.")
-    cron_expression: str | None = Field(None, description="The cron expression for the schedule.")
-    description: str | None = Field(None, description="The description of the trigger.")
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_trigger(trigger: TriggerCreateModel, db: DatabaseStorage = Depends(get_db)):

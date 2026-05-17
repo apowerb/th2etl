@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, Field
 
 from th2etl.storage import DatabaseStorage
 from th2etl.configs.settings import get_settings
+from th2etl.schemas.schedulers import SchedulerCreateModel, SchedulerUpdateModel
 
 router = APIRouter()
 
@@ -13,16 +13,7 @@ def get_db():
     with DatabaseStorage.from_settings(settings) as db:
         yield db
 
-class SchedulerCreateModel(BaseModel):
-    name: str = Field(..., description="The unique name of the scheduler.")
-    pipeline_name: str = Field(..., description="The name of the pipeline to schedule.")
-    trigger_name: str = Field(..., description="The name of the trigger to use for the schedule.")
-    description: str | None = Field(None, description="An optional description of the scheduler.")
 
-class SchedulerUpdateModel(BaseModel):
-    pipeline_name: str | None = Field(None, description="The name of the pipeline.")
-    trigger_name: str | None = Field(None, description="The name of the trigger.")
-    description: str | None = Field(None, description="The description of the scheduler.")
 
 @router.post("/", status_code=status.HTTP_201_CREATED)
 def create_scheduler(scheduler: SchedulerCreateModel, db: DatabaseStorage = Depends(get_db)):
