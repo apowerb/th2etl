@@ -27,6 +27,10 @@ th2etl = "th2etl.runner:main"
 test = [
     "pytest>=7.4.0",
 ]
+postgres = [
+    "sqlalchemy>=2.0",
+    "pandas>=2.1.0",
+]
 
 [build-system]
 requires = ["uv_build>=0.8.14,<0.9.0"]

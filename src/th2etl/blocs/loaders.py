@@ -45,37 +45,6 @@ class CsvLoaderBloc(LoaderBloc):
             raise
 
 
-class PostgresLoaderBloc(LoaderBloc):
-    """Loads data from a PostgreSQL database."""
-
-    def __init__(
-        self,
-        name: str,
-        dependencies: Sequence[str] | None = None,
-        config: dict[str, Any] | None = None,
-    ) -> None:
-        super().__init__(name=name, dependencies=dependencies)
-        self.config = PostgresLoaderConfig(**(config or {}))
-        self.settings = get_settings()
-
-    def execute(self, run_context: RunContext) -> None:
-        logger.info("Executing query against PostgreSQL database")
-        try:
-            with psycopg.connect(self.settings.database_dsn, row_factory=dict_row) as conn:
-                with conn.cursor() as cur:
-                    cur.execute(self.config.query)
-                    rows = cur.fetchall()
-            
-            # Convert all values to strings for consistent downstream processing
-            rows = [{k: str(v) for k, v in row.items()} for row in rows]
-            
-            run_context.context_vars[f"{self.name}_data"] = rows
-            logger.info(f"Loaded {len(rows)} rows from the database")
-        except Exception as e:
-            logger.error(f"Failed to execute query: {e}")
-            raise
-
-
 class ApiLoaderBloc(LoaderBloc):
     """Loads data from a web API."""
 
