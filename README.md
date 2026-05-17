@@ -1,3 +1,9 @@
+[![PyPI version](https://badge.fury.io/py/th2etl.svg)](https://badge.fury.io/py/th2etl)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/th2etl)
+[![Build Status](https://github.com/thaink2/th2etl/actions/workflows/build.yaml/badge.svg)](https://github.com/thaink2/th2etl/actions/workflows/build.yaml)
+[![Publish Status](https://github.com/thaink2/th2etl/actions/workflows/publish.yaml/badge.svg)](https://github.com/thaink2/th2etl/actions/workflows/publish.yaml)
+
 # th2etl
 thaink2 in house built ETL and automatisation library
 
