@@ -257,6 +257,12 @@ Create pipeline metadata from the command line and then start the ETL service.
     th2etl
     ```
 
+## Pipeline Examples
+
+For detailed, hands-on examples of how to create different types of pipelines (sequential, parallel, multi-source), please see the example notebook:
+
+- [Pipeline Examples Notebook](examples/pipelines/full.ipynb)
+
 ## Persistent Storage
 
 Use `DatabaseStorage` to persist bloc, pipeline, trigger, and scheduler definitions.
