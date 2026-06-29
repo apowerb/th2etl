@@ -1,6 +1,15 @@
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
+
+
+class PipelineRunRequest(BaseModel):
+    variables: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Runtime variables passed into the pipeline run context.",
+    )
 
 
 class PipelineCreateModel(BaseModel):
