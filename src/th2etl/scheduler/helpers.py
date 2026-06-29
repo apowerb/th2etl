@@ -10,8 +10,8 @@ import threading
 
 from th2etl.pipelines.pipeline import Pipeline, build_pipeline_from_database
 from th2etl.pipelines.context import RunContext
-from th2etl.storage import DatabaseStorage, TriggerRecord
-from th2etl.configs.settings import get_settings
+from th2etl.storage import DatabaseStorage, SchedulerRecord, TriggerRecord
+from th2etl.configs.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()

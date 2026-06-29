@@ -24,6 +24,15 @@ class PostgresLoaderConfig(BaseBlocConfig):
     query: str = Field(..., description="The SQL query to execute to load the data.")
 
 
+class PostgresExporterConfig(BaseBlocConfig):
+    """Configuration for exporting data to a PostgreSQL table."""
+
+    table_name: str = Field(..., description="The destination table name.")
+    source_bloc: str = Field(..., description="Name of the bloc whose '{source_bloc}_data' is written.")
+    schema: str | None = Field(None, description="Optional destination schema.")
+    if_exists: str = Field("replace", description="pandas to_sql behaviour: 'fail', 'replace' or 'append'.")
+
+
 class ApiLoaderConfig(BaseBlocConfig):
     """Configuration for loading data from a web API."""
 

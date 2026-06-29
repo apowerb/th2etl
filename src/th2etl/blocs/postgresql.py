@@ -7,6 +7,8 @@ import pandas as pd
 from sqlalchemy import create_engine
 
 from th2etl.blocs.base import ExporterBloc, LoaderBloc
+from th2etl.blocs.schemas import PostgresLoaderConfig, PostgresExporterConfig
+from th2etl.configs.settings import get_settings
 
 if TYPE_CHECKING:
     from th2etl.pipelines.context import RunContext
@@ -15,75 +17,47 @@ logger = logging.getLogger(__name__)
 
 
 class PostgresLoaderBloc(LoaderBloc):
-    """
-    A bloc that loads data from a PostgreSQL table into the run context.
+    """Loads data from PostgreSQL into the run context.
+
+    Writes ``context_vars["{name}_data"]`` as a list of row dicts, matching
+    the other loader blocs.
     """
 
-    def __init__(
-        self,
-        name: str,
-        table_name: str,
-        schema: str | None = None,
-    ) -> None:
-        super().__init__(name)
-        self.table_name = table_name
-        self.schema = schema
+    def __init__(self, name: str, config: dict[str, Any] | None = None) -> None:
+        super().__init__(name=name)
+        self.config = PostgresLoaderConfig(**(config or {}))
 
-    def execute(self, run_context: RunContext) -> None:
-        """
-        Loads data from the specified PostgreSQL table and adds it to the run context.
-        """
-        logger.info(f"Executing PostgresLoaderBloc: {self.name}")
-        db_settings = run_context.get_database_settings()
-        engine = create_engine(db_settings.database_dsn)
-        query = f"SELECT * FROM {self.schema}.{self.table_name}" if self.schema else f"SELECT * FROM {self.table_name}"
-        
+    def execute(self, run_context: "RunContext") -> None:
+        logger.info("Executing PostgresLoaderBloc: %s", self.name)
+        engine = create_engine(get_settings().database_dsn)
         with engine.connect() as connection:
-            df = pd.read_sql(query, connection)
-            run_context.set_data(self.name, df)
-        
-        logger.info(f"Finished executing PostgresLoaderBloc: {self.name}")
+            df = pd.read_sql(self.config.query, connection)
+        run_context.context_vars[f"{self.name}_data"] = df.to_dict(orient="records")
+        logger.info("Loaded %d rows in PostgresLoaderBloc: %s", len(df), self.name)
 
 
 class PostgresExporterBloc(ExporterBloc):
-    """
-    A bloc that exports data from the run context to a PostgreSQL table.
-    """
+    """Exports a source bloc's data (``context_vars["{source_bloc}_data"]``)
+    to a PostgreSQL table."""
 
-    def __init__(
-        self,
-        name: str,
-        table_name: str,
-        source_bloc: str,
-        schema: str | None = None,
-        if_exists: str = "replace",
-    ) -> None:
-        super().__init__(name)
-        self.table_name = table_name
-        self.source_bloc = source_bloc
-        self.schema = schema
-        self.if_exists = if_exists
+    def __init__(self, name: str, config: dict[str, Any] | None = None) -> None:
+        super().__init__(name=name)
+        self.config = PostgresExporterConfig(**(config or {}))
 
-    def execute(self, run_context: RunContext) -> None:
-        """
-        Exports data from a dependency to the specified PostgreSQL table.
-        """
-        logger.info(f"Executing PostgresExporterBloc: {self.name}")
-        db_settings = run_context.get_database_settings()
-        engine = create_engine(db_settings.database_dsn)
-        
-        df = run_context.get_data(self.source_bloc)
-        
-        if df is None:
-            raise ValueError(f"No data found for source bloc: {self.source_bloc}")
-            
+    def execute(self, run_context: "RunContext") -> None:
+        logger.info("Executing PostgresExporterBloc: %s", self.name)
+        data = run_context.context_vars.get(f"{self.config.source_bloc}_data")
+        if data is None:
+            raise ValueError(f"No data found for source bloc: {self.config.source_bloc}")
+
+        df = pd.DataFrame(data)
+        engine = create_engine(get_settings().database_dsn)
         with engine.connect() as connection:
             df.to_sql(
-                self.table_name,
+                self.config.table_name,
                 connection,
-                schema=self.schema,
-                if_exists=self.if_exists,
+                schema=self.config.schema,
+                if_exists=self.config.if_exists,
                 index=False,
             )
-        
-        logger.info(f"Finished executing PostgresExporterBloc: {self.name}")
+        logger.info("Exported %d rows in PostgresExporterBloc: %s", len(df), self.name)
