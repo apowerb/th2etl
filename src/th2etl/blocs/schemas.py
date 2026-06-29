@@ -24,6 +24,16 @@ class PostgresLoaderConfig(BaseBlocConfig):
     query: str = Field(..., description="The SQL query to execute to load the data.")
 
 
+class PdfLoaderConfig(BaseBlocConfig):
+    """Configuration for extracting text from a PDF file."""
+
+    file_path: str = Field(..., description="The path to the PDF file to load.")
+    pages: list[int] | None = Field(
+        None,
+        description="Optional 0-indexed subset of pages to extract. Extracts all pages when omitted.",
+    )
+
+
 class ApiLoaderConfig(BaseBlocConfig):
     """Configuration for loading data from a web API."""
 
