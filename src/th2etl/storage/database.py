@@ -22,6 +22,7 @@ class RunStatus(str, Enum):
     RUNNING = "running"
     SUCCESS = "success"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -78,6 +79,7 @@ class RunRecord:
     variables: dict[str, Any]
     result: dict[str, Any] | None
     error: str | None
+    scheduler_name: str | None
     created_at: str
     updated_at: str
     started_at: str | None
@@ -204,6 +206,7 @@ class DatabaseStorage:
                     variables JSONB NOT NULL,
                     result JSONB,
                     error TEXT,
+                    scheduler_name TEXT,
                     created_at TIMESTAMPTZ NOT NULL,
                     updated_at TIMESTAMPTZ NOT NULL,
                     started_at TIMESTAMPTZ,
@@ -225,12 +228,16 @@ class DatabaseStorage:
     def _apply_migrations(self, schedulers_table: str) -> None:
         if DatabaseStorage._migrated:
             return
+        runs_table = self._table_name("pipeline_runs")
         with self.connection.cursor() as cur:
             cur.execute(
                 f"ALTER TABLE {schedulers_table} ADD COLUMN IF NOT EXISTS variables JSONB NOT NULL DEFAULT '{{}}'"
             )
             cur.execute(
                 f"ALTER TABLE {schedulers_table} ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE"
+            )
+            cur.execute(
+                f"ALTER TABLE {runs_table} ADD COLUMN IF NOT EXISTS scheduler_name TEXT"
             )
         self.connection.commit()
         DatabaseStorage._migrated = True
@@ -312,6 +319,7 @@ class DatabaseStorage:
             variables=row["variables"],
             result=row["result"],
             error=row["error"],
+            scheduler_name=row.get("scheduler_name"),
             created_at=row["created_at"].isoformat() if row["created_at"] else "",
             updated_at=row["updated_at"].isoformat() if row["updated_at"] else "",
             started_at=row["started_at"].isoformat() if row["started_at"] else None,
@@ -322,16 +330,18 @@ class DatabaseStorage:
         self,
         pipeline_name: str,
         variables: dict[str, Any] | None = None,
+        scheduler_name: str | None = None,
     ) -> RunRecord:
         now = self._now()
         runs_table = self._table_name("pipeline_runs")
         row = self._execute(
-            f"INSERT INTO {runs_table} (pipeline_name, status, variables, created_at, updated_at) "
-            f"VALUES (%s, %s, %s, %s, %s) RETURNING *",
+            f"INSERT INTO {runs_table} (pipeline_name, status, variables, scheduler_name, created_at, updated_at) "
+            f"VALUES (%s, %s, %s, %s, %s, %s) RETURNING *",
             (
                 pipeline_name,
                 RunStatus.PENDING.value,
                 self._serialize(variables or {}),
+                scheduler_name,
                 now,
                 now,
             ),
@@ -352,6 +362,35 @@ class DatabaseStorage:
         )
         return [self._row_to_run(row) for row in rows]
 
+    def list_scheduler_runs(self, scheduler_name: str, limit: int = 50) -> list[RunRecord]:
+        runs_table = self._table_name("pipeline_runs")
+        rows = self._query_all(
+            f"SELECT * FROM {runs_table} WHERE scheduler_name = %s ORDER BY id DESC LIMIT %s",
+            (scheduler_name, limit),
+        )
+        return [self._row_to_run(row) for row in rows]
+
+    def cancel_pipeline_run(self, run_id: int) -> RunRecord | None:
+        """Best-effort cancel: atomically mark a NON-terminal run as cancelled.
+        The background worker is not interrupted, but the status reflects the
+        cancellation, and a worker finishing afterwards won't overwrite it (it
+        finalises only a still-``running`` run). Returns None if the run does
+        not exist; the unchanged run if it was already terminal."""
+        now = self._now()
+        runs_table = self._table_name("pipeline_runs")
+        row = self._execute(
+            f"UPDATE {runs_table} SET status = %s, finished_at = %s, updated_at = %s "
+            f"WHERE id = %s AND status NOT IN (%s, %s, %s) RETURNING *",
+            (
+                RunStatus.CANCELLED.value, now, now, run_id,
+                RunStatus.SUCCESS.value, RunStatus.FAILED.value, RunStatus.CANCELLED.value,
+            ),
+        )
+        if row is not None:
+            return self._row_to_run(row)
+        # not cancelled: either the run doesn't exist, or it was already terminal
+        return self.get_pipeline_run(run_id)
+
     def update_pipeline_run(
         self,
         run_id: int,
@@ -361,7 +400,13 @@ class DatabaseStorage:
         error: str | None = None,
         started_at: str | None = None,
         finished_at: str | None = None,
-    ) -> RunRecord:
+        where_status: str | None = None,
+    ) -> RunRecord | None:
+        """Update a run. When ``where_status`` is given, the update only applies
+        if the run is currently in that status (a guarded transition, e.g. only
+        finalise a run that is still ``running`` — never overwrite a cancel);
+        returns None when the guard doesn't match. Without a guard, a missing
+        run raises ValueError."""
         set_clauses = ["updated_at = %s"]
         params: list[Any] = [self._now()]
         if status is not None:
@@ -380,13 +425,20 @@ class DatabaseStorage:
             set_clauses.append("finished_at = %s")
             params.append(finished_at)
 
+        where = "id = %s"
         params.append(run_id)
+        if where_status is not None:
+            where += " AND status = %s"
+            params.append(where_status)
+
         runs_table = self._table_name("pipeline_runs")
         row = self._execute(
-            f"UPDATE {runs_table} SET {', '.join(set_clauses)} WHERE id = %s RETURNING *",
+            f"UPDATE {runs_table} SET {', '.join(set_clauses)} WHERE {where} RETURNING *",
             tuple(params),
         )
         if row is None:
+            if where_status is not None:
+                return None  # guard didn't match (already terminal/cancelled)
             raise ValueError(f"Pipeline run {run_id!r} does not exist")
         return self._row_to_run(row)
 

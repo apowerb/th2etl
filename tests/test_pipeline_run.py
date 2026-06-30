@@ -36,12 +36,12 @@ class FakeStorage:
         return self.pipelines.get(name)
 
     # --- runs ---
-    def create_pipeline_run(self, pipeline_name: str, variables: dict | None = None) -> RunRecord:
+    def create_pipeline_run(self, pipeline_name: str, variables: dict | None = None, scheduler_name=None) -> RunRecord:
         self._run_seq += 1
         now = datetime.utcnow().isoformat()
         run = RunRecord(
             id=self._run_seq, pipeline_name=pipeline_name, status=RunStatus.PENDING.value,
-            variables=variables or {}, result=None, error=None,
+            variables=variables or {}, result=None, error=None, scheduler_name=scheduler_name,
             created_at=now, updated_at=now, started_at=None, finished_at=None,
         )
         self.runs[run.id] = run

@@ -61,6 +61,38 @@ def test_manager_skips_inactive_schedulers():
         manager.executor.shutdown(wait=True)
 
 
+class _TrackStorage:
+    def __init__(self) -> None:
+        self.created: list[dict] = []
+        self.updates: list[dict] = []
+
+    def create_pipeline_run(self, pipeline_name, variables=None, scheduler_name=None):
+        self.created.append({"pipeline_name": pipeline_name, "scheduler_name": scheduler_name})
+        return RunRecord(
+            id=1, pipeline_name=pipeline_name, status=RunStatus.PENDING.value,
+            variables=variables or {}, result=None, error=None, scheduler_name=scheduler_name,
+            created_at="", updated_at="", started_at=None, finished_at=None,
+        )
+
+    def update_pipeline_run(self, run_id, **fields):
+        self.updates.append(fields)
+
+
+def test_cron_fire_records_tracked_run_keyed_by_scheduler():
+    storage, pipe = _TrackStorage(), _FakePipeline()
+    sched = CronScheduler(
+        pipeline=pipe, trigger=CronTrigger("* * * * *"), name="agent42",
+        pipeline_name="agents", variables={"agent_id": "42"}, storage=storage,
+    )
+    sched.run_once()
+    assert storage.created == [{"pipeline_name": "agents", "scheduler_name": "agent42"}]
+    statuses = [u["status"] for u in storage.updates if "status" in u]
+    assert statuses == [RunStatus.RUNNING.value, RunStatus.SUCCESS.value]
+    assert pipe.seen == {"agent_id": "42"}
+    # the finalising update is guarded so a concurrent cancel survives
+    assert storage.updates[-1].get("where_status") == RunStatus.RUNNING.value
+
+
 # --- router: ad-hoc run-now merges stored + request variables ---
 
 def _record(name="s1", variables=None):
@@ -90,11 +122,12 @@ class _FakeStorage:
         self.updated_vars = variables
         return _record(name, variables=variables)
 
-    def create_pipeline_run(self, pipeline_name, variables=None):
+    def create_pipeline_run(self, pipeline_name, variables=None, scheduler_name=None):
         self.created_run_vars = variables
+        self.created_run_scheduler = scheduler_name
         return RunRecord(
             id=99, pipeline_name=pipeline_name, status=RunStatus.PENDING.value,
-            variables=variables or {}, result=None, error=None,
+            variables=variables or {}, result=None, error=None, scheduler_name=scheduler_name,
             created_at="", updated_at="", started_at=None, finished_at=None,
         )
 
@@ -121,6 +154,7 @@ def test_run_now_merges_stored_and_request_variables(client):
     assert resp.status_code == 202
     expected = {"agent_id": "stored", "jwt_token": "new", "extra": "x"}  # request overrides stored
     assert client.fake.created_run_vars == expected
+    assert client.fake.created_run_scheduler == "s1"  # run tagged with its scheduler
     assert client.scheduled[0] == (99, "agents", expected)
 
 

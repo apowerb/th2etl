@@ -11,6 +11,7 @@ import threading
 from th2etl.pipelines.pipeline import Pipeline, build_pipeline_from_database
 from th2etl.pipelines.context import RunContext
 from th2etl.storage import DatabaseStorage, SchedulerRecord, TriggerRecord
+from th2etl.storage.database import RunStatus
 from th2etl.configs.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -120,6 +121,7 @@ class CronScheduler:
         pipeline_name: str | None = None,
         variables: dict | None = None,
         active: bool = True,
+        storage: "DatabaseStorage | None" = None,
     ) -> None:
         self.pipeline = pipeline
         self.pipeline_name = pipeline_name
@@ -129,6 +131,7 @@ class CronScheduler:
         self.settings = settings
         self.variables = variables or {}
         self.active = active
+        self.storage = storage
         self._next_run = self.trigger.next_run(datetime.now())
         logger.info(f"Initialized scheduler '{self.name}' with trigger '{trigger.expression}'. Next run at {self._next_run}")
 
@@ -149,16 +152,55 @@ class CronScheduler:
             context_vars=dict(self.variables),
         )
 
+        run_id = self._begin_tracked_run(start_at)
+
         try:
             self.pipeline.execute(run_context)
             duration = (datetime.now() - start_at).total_seconds()
             logger.info("Successfully finished pipeline '%s' in %.2f seconds", self.name, duration)
-        except Exception:
+            self._finish_tracked_run(run_id, RunStatus.SUCCESS.value)
+        except Exception as exc:
             duration = (datetime.now() - start_at).total_seconds()
             logger.exception("Pipeline '%s' failed after %.2f seconds", self.name, duration)
+            self._finish_tracked_run(run_id, RunStatus.FAILED.value, error=str(exc))
         finally:
             # Always schedule the next run, even if the pipeline failed
             self._next_run = self.trigger.next_run(start_at + timedelta(minutes=1))
+
+    def _begin_tracked_run(self, start_at: datetime) -> int | None:
+        """Record a run row for this cron fire (so it shows in run history),
+        keyed by scheduler_name. No-op when no storage is wired."""
+        if self.storage is None:
+            return None
+        try:
+            run = self.storage.create_pipeline_run(
+                pipeline_name=self.pipeline_name or self.name,
+                variables=dict(self.variables),
+                scheduler_name=self.name,
+            )
+            self.storage.update_pipeline_run(
+                run.id, status=RunStatus.RUNNING.value, started_at=start_at.isoformat()
+            )
+            return run.id
+        except Exception:
+            logger.exception("Could not record run for scheduler '%s'", self.name)
+            return None
+
+    def _finish_tracked_run(self, run_id: int | None, status: str, error: str | None = None) -> None:
+        if run_id is None or self.storage is None:
+            return
+        try:
+            # Only finalise a still-running run: if it was cancelled meanwhile,
+            # the guard makes this a no-op so the cancel survives.
+            self.storage.update_pipeline_run(
+                run_id,
+                status=status,
+                error=error,
+                finished_at=datetime.now().isoformat(),
+                where_status=RunStatus.RUNNING.value,
+            )
+        except Exception:
+            logger.exception("Could not finalize run %s for scheduler '%s'", run_id, self.name)
 
     def run_pending(self) -> bool:
         if not self.active:
@@ -309,6 +351,7 @@ class SchedulerManager:
             settings=self.settings,
             variables=scheduler_record.variables,
             active=scheduler_record.active,
+            storage=self.storage,
         )
 
     def _refresh_triggers_from_database(self) -> None:
@@ -449,6 +492,7 @@ def load_scheduler_manager(
                 settings=settings,
                 variables=scheduler.variables,
                 active=scheduler.active,
+                storage=storage,
             )
         )
     
