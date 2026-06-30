@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 
@@ -22,6 +22,17 @@ class PostgresLoaderConfig(BaseBlocConfig):
     """Configuration for loading data from a PostgreSQL database."""
 
     query: str = Field(..., description="The SQL query to execute to load the data.")
+
+
+class PostgresExporterConfig(BaseBlocConfig):
+    """Configuration for exporting data to a PostgreSQL table."""
+
+    table_name: str = Field(..., description="The destination table name.")
+    source_bloc: str = Field(..., description="Name of the bloc whose '{source_bloc}_data' is written.")
+    db_schema: str | None = Field(None, description="Optional destination schema.")
+    if_exists: Literal["fail", "replace", "append"] = Field(
+        "replace", description="pandas to_sql behaviour when the table exists."
+    )
 
 
 class ApiLoaderConfig(BaseBlocConfig):

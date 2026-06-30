@@ -4,14 +4,14 @@ import logging
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta
-from typing import Iterable, Sequence
+from typing import Sequence
 from pathlib import Path
 import threading
 
 from th2etl.pipelines.pipeline import Pipeline, build_pipeline_from_database
 from th2etl.pipelines.context import RunContext
-from th2etl.storage import DatabaseStorage, TriggerRecord
-from th2etl.configs.settings import get_settings
+from th2etl.storage import DatabaseStorage, SchedulerRecord, TriggerRecord
+from th2etl.configs.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
