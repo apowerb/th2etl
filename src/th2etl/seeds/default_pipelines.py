@@ -6,6 +6,15 @@ WARNING — the bloc configs below are PLACEHOLDERS. The ADK ``base_url`` /
 values (and, ideally, fed from run variables once blocs read them from the
 run context). This seed creates the STRUCTURE; the values need a review pass.
 
+DEPENDENCY — ``process_pdf`` is NOT executable until the ``pdf_loader`` bloc
+factory is registered, which ships in the feat/pdf-loader-bloc PR (#3). Seeding
+before that PR is merged creates a pipeline that fails at build time with
+``No registered bloc factory for bloc_type='pdf_loader'``. ``agents`` works on
+its own.
+
+CONCURRENCY — not safe to run concurrently: ``get`` then ``create`` is not
+atomic, so two simultaneous runs can hit a UNIQUE violation. Run it once.
+
 Run it against a live th2etl database with:
 
     python -m th2etl.seeds.default_pipelines
@@ -17,8 +26,9 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Placeholder — point this at the deployed ADK agent API before going live.
-DEFAULT_AGENT_BASE_URL = "https://api-agent-dev.thaink2.fr"
+# Placeholders — set these to real values before going live (don't ship the
+# DEV URL by accident: keep it an explicit REPLACE_ME so it can't be missed).
+DEFAULT_AGENT_BASE_URL = "REPLACE_ME_BASE_URL"
 PLACEHOLDER = "REPLACE_ME"
 
 SEED_BLOCS: list[dict[str, Any]] = [

@@ -31,10 +31,12 @@ class FakeStorage:
     def create_pipeline(self, name, stages, description=None):
         if name in self.pipelines:
             raise AssertionError(f"create_pipeline called twice for {name}")
-        # mimic the real storage: every referenced bloc must already exist
+        # mimic the real storage (_ensure_blocs_exist raises ValueError):
+        # every referenced bloc must already exist
         for stage in stages:
             for bloc_name in stage:
-                assert bloc_name in self.blocs, f"bloc {bloc_name} must exist before pipeline {name}"
+                if bloc_name not in self.blocs:
+                    raise ValueError(f"bloc {bloc_name} must exist before pipeline {name}")
         self.pipelines[name] = {"stages": stages, "description": description}
 
 
