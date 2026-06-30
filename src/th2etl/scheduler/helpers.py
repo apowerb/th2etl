@@ -110,13 +110,25 @@ class CronTrigger:
 
 
 class CronScheduler:
-    def __init__(self, pipeline: Pipeline, trigger: CronTrigger, name: str | None = None, trigger_name: str | None = None, settings: Settings | None = None, pipeline_name: str | None = None) -> None:
+    def __init__(
+        self,
+        pipeline: Pipeline,
+        trigger: CronTrigger,
+        name: str | None = None,
+        trigger_name: str | None = None,
+        settings: Settings | None = None,
+        pipeline_name: str | None = None,
+        variables: dict | None = None,
+        active: bool = True,
+    ) -> None:
         self.pipeline = pipeline
         self.pipeline_name = pipeline_name
         self.trigger = trigger
         self.trigger_name = trigger_name
         self.name = name or pipeline.__class__.__name__
         self.settings = settings
+        self.variables = variables or {}
+        self.active = active
         self._next_run = self.trigger.next_run(datetime.now())
         logger.info(f"Initialized scheduler '{self.name}' with trigger '{trigger.expression}'. Next run at {self._next_run}")
 
@@ -134,6 +146,7 @@ class CronScheduler:
             trigger_name=self.trigger_name,
             scheduled_at=start_at,
             output_dir=output_dir,
+            context_vars=dict(self.variables),
         )
 
         try:
@@ -148,6 +161,8 @@ class CronScheduler:
             self._next_run = self.trigger.next_run(start_at + timedelta(minutes=1))
 
     def run_pending(self) -> bool:
+        if not self.active:
+            return False
         now = datetime.now().replace(second=0, microsecond=0)
         logger.debug(f"Checking scheduler '{self.name}' at {now}. Next run is at {self._next_run}.")
         if now >= self._next_run:
@@ -193,6 +208,8 @@ class SchedulerManager:
         now = datetime.now().replace(second=0, microsecond=0)
         futures: list[Future[None]] = []
         for scheduler in self.schedulers:
+            if not scheduler.active:
+                continue
             if scheduler.next_run() <= now:
                 logger.info("Dispatching scheduled pipeline '%s' for execution", scheduler.name)
                 scheduler.schedule_next_run(now)
@@ -242,6 +259,8 @@ class SchedulerManager:
                 existing.pipeline_name == scheduler_record.pipeline_name
                 and existing.trigger_name == scheduler_record.trigger_name
                 and existing.trigger.expression == trigger_record.cron_expression
+                and existing.variables == scheduler_record.variables
+                and existing.active == scheduler_record.active
             ):
                 return  # No changes detected
 
@@ -269,6 +288,8 @@ class SchedulerManager:
         existing.pipeline = new_scheduler.pipeline
         existing.trigger = new_scheduler.trigger
         existing.trigger_name = new_scheduler.trigger_name
+        existing.variables = new_scheduler.variables
+        existing.active = new_scheduler.active
         existing.schedule_next_run(datetime.now())
 
     def _build_scheduler_from_record(self, scheduler_record: SchedulerRecord) -> CronScheduler:
@@ -286,6 +307,8 @@ class SchedulerManager:
             name=scheduler_record.name,
             trigger_name=scheduler_record.trigger_name,
             settings=self.settings,
+            variables=scheduler_record.variables,
+            active=scheduler_record.active,
         )
 
     def _refresh_triggers_from_database(self) -> None:
@@ -424,6 +447,8 @@ def load_scheduler_manager(
                 name=scheduler.name,
                 trigger_name=scheduler.trigger_name,
                 settings=settings,
+                variables=scheduler.variables,
+                active=scheduler.active,
             )
         )
     
@@ -453,6 +478,11 @@ def start_scheduler_manager_from_database(
     manager.start()
 
 
-def schedule_pipeline(pipeline: Pipeline, expression: str) -> CronScheduler:
+def schedule_pipeline(
+    pipeline: Pipeline,
+    expression: str,
+    variables: dict | None = None,
+    active: bool = True,
+) -> CronScheduler:
     trigger = CronTrigger(expression)
-    return CronScheduler(pipeline=pipeline, trigger=trigger)
+    return CronScheduler(pipeline=pipeline, trigger=trigger, variables=variables, active=active)

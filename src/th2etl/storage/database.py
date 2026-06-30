@@ -64,6 +64,8 @@ class SchedulerRecord:
     pipeline_name: str
     trigger_name: str
     description: str | None
+    variables: dict[str, Any]
+    active: bool
     created_at: str
     updated_at: str
 
@@ -189,6 +191,8 @@ class DatabaseStorage:
                     pipeline_id INTEGER NOT NULL REFERENCES {pipelines_table}(id) ON DELETE CASCADE,
                     trigger_id INTEGER NOT NULL REFERENCES {triggers_table}(id) ON DELETE CASCADE,
                     description TEXT,
+                    variables JSONB NOT NULL DEFAULT '{{}}',
+                    active BOOLEAN NOT NULL DEFAULT TRUE,
                     created_at TIMESTAMPTZ NOT NULL,
                     updated_at TIMESTAMPTZ NOT NULL
                 );
@@ -211,6 +215,25 @@ class DatabaseStorage:
                 """
             )
         self.connection.commit()
+        self._apply_migrations(schedulers_table)
+
+    # Run-once-per-process migrations. ALTER TABLE takes an ACCESS EXCLUSIVE
+    # lock, so it must NOT run on every request — only once when the process
+    # first opens a connection.
+    _migrated: bool = False
+
+    def _apply_migrations(self, schedulers_table: str) -> None:
+        if DatabaseStorage._migrated:
+            return
+        with self.connection.cursor() as cur:
+            cur.execute(
+                f"ALTER TABLE {schedulers_table} ADD COLUMN IF NOT EXISTS variables JSONB NOT NULL DEFAULT '{{}}'"
+            )
+            cur.execute(
+                f"ALTER TABLE {schedulers_table} ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE"
+            )
+        self.connection.commit()
+        DatabaseStorage._migrated = True
 
     def _now(self) -> str:
         return datetime.utcnow().isoformat()
@@ -275,6 +298,8 @@ class DatabaseStorage:
             pipeline_name=pipeline_row["name"],
             trigger_name=trigger_row["name"],
             description=row["description"],
+            variables=row.get("variables") or {},
+            active=row.get("active", True),
             created_at=row["created_at"].isoformat() if row["created_at"] else "",
             updated_at=row["updated_at"].isoformat() if row["updated_at"] else "",
         )
@@ -602,14 +627,17 @@ class DatabaseStorage:
         pipeline_name: str,
         trigger_name: str,
         description: str | None = None,
+        variables: dict[str, Any] | None = None,
+        active: bool = True,
     ) -> SchedulerRecord:
         pipeline_id = self._require_pipeline_id(pipeline_name)
         trigger_id = self._require_trigger_id(trigger_name)
         now = self._now()
         schedulers_table = self._table_name("schedulers")
         row = self._execute(
-            f"INSERT INTO {schedulers_table} (name, pipeline_id, trigger_id, description, created_at, updated_at) VALUES (%s, %s, %s, %s, %s, %s) RETURNING *",
-            (name, pipeline_id, trigger_id, description, now, now),
+            f"INSERT INTO {schedulers_table} (name, pipeline_id, trigger_id, description, variables, active, created_at, updated_at) "
+            f"VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
+            (name, pipeline_id, trigger_id, description, self._serialize(variables or {}), active, now, now),
         )
         assert row is not None
         scheduler = self._row_to_scheduler(row)
@@ -631,6 +659,8 @@ class DatabaseStorage:
         pipeline_name: str | None = None,
         trigger_name: str | None = None,
         description: str | None = None,
+        variables: dict[str, Any] | None = None,
+        active: bool | None = None,
     ) -> SchedulerRecord:
         existing = self.get_scheduler(name)
         if existing is None:
@@ -639,16 +669,31 @@ class DatabaseStorage:
         pipeline_id = self._require_pipeline_id(pipeline_name or existing.pipeline_name)
         trigger_id = self._require_trigger_id(trigger_name or existing.trigger_name)
         updated_description = description if description is not None else existing.description
+        updated_variables = variables if variables is not None else existing.variables
+        updated_active = active if active is not None else existing.active
         now = self._now()
 
         schedulers_table = self._table_name("schedulers")
         row = self._execute(
-            f"UPDATE {schedulers_table} SET pipeline_id = %s, trigger_id = %s, description = %s, updated_at = %s WHERE name = %s RETURNING *",
-            (pipeline_id, trigger_id, updated_description, now, name),
+            f"UPDATE {schedulers_table} SET pipeline_id = %s, trigger_id = %s, description = %s, "
+            f"variables = %s, active = %s, updated_at = %s WHERE name = %s RETURNING *",
+            (pipeline_id, trigger_id, updated_description, self._serialize(updated_variables), updated_active, now, name),
         )
         assert row is not None
         scheduler = self._row_to_scheduler(row)
         return scheduler
+
+    def update_scheduler_variables(self, name: str, variables: dict[str, Any]) -> SchedulerRecord:
+        """Replace a scheduler's runtime variables (used for e.g. token rotation)."""
+        now = self._now()
+        schedulers_table = self._table_name("schedulers")
+        row = self._execute(
+            f"UPDATE {schedulers_table} SET variables = %s, updated_at = %s WHERE name = %s RETURNING *",
+            (self._serialize(variables), now, name),
+        )
+        if row is None:
+            raise ValueError(f"Scheduler {name!r} does not exist")
+        return self._row_to_scheduler(row)
 
     def delete_scheduler(self, name: str) -> bool:
         schedulers_table = self._table_name("schedulers")
