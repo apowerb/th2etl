@@ -76,11 +76,14 @@ class ScriptBlocConfig(BaseBlocConfig):
 class RunAdkAgentsConfig(BaseBlocConfig):
     """Configuration for running an ADK agent."""
 
-    base_url: str = Field(..., description="The base URL of the ADK agent API (e.g., https://api-agent-dev.thaink2.fr).")
-    agent_id: str = Field(..., description="The ID of the agent to run.")
-    user_id: str = Field(..., description="The user's ID, typically an email, used for the JWT 'sub' claim.")
-    message_text: str = Field(..., description="The text content of the message to send to the agent.")
-    data: dict[str, Any] | None = Field(default_factory=dict, description="Optional dictionary of data to pass to the agent.")
+    base_url: str = Field(..., description="The base URL of the ADK agent API (e.g., https://api-agent-dev.thaink2.fr). Environment-level (set per deployment).")
+    # agent_id / user_id / message_text are resolved at run time from the run
+    # variables (run_context.context_vars) and fall back to these static values
+    # when not provided — so they are optional here.
+    agent_id: str | None = Field(None, description="The ID of the agent to run. Usually supplied per run via the 'agent_id' run variable.")
+    user_id: str | None = Field(None, description="The user's ID (JWT 'sub'). Usually supplied per run via the 'user_id' run variable.")
+    message_text: str | None = Field(None, description="The message to send. Usually supplied per run via the 'message_text' run variable.")
+    data: dict[str, Any] | None = Field(default_factory=dict, description="Optional data to pass to the agent. Can be overridden by the 'data' run variable.")
     run_mode: str = Field("run", description="The run mode for the agent.")
     streaming: bool = Field(False, description="Whether to use streaming mode.")
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Sequence
+from typing import Any
 import uuid
 
 import requests
@@ -26,11 +26,26 @@ class RunAdkAgentsBloc(TransformerBloc):
         self.config = RunAdkAgentsConfig(**(config or {}))
 
     def execute(self, run_context: RunContext) -> None:
-        logger.info(f"Running ADK agent '{self.config.agent_id}' for user '{self.config.user_id}'")
-        
+        # Resolve per-run values from the run variables (context_vars), falling
+        # back to the static bloc config. th2agent supplies agent_id/user_id/
+        # message_text per run, so these normally arrive as run variables.
+        cv = run_context.context_vars
+        agent_id = cv.get("agent_id") or self.config.agent_id
+        user_id = cv.get("user_id") or self.config.user_id
+        message_text = cv.get("message_text") or self.config.message_text
+        data = cv["data"] if "data" in cv else self.config.data
+
+        missing = [n for n, v in (("agent_id", agent_id), ("user_id", user_id), ("message_text", message_text)) if not v]
+        if missing:
+            raise ValueError(
+                f"RunAdkAgentsBloc '{self.name}': missing {missing} — supply via run variables or bloc config"
+            )
+
+        logger.info(f"Running ADK agent '{agent_id}' for user '{user_id}'")
+
         # Generate JWT token on the fly
-        jwt_token = create_access_token(data={"sub": self.config.user_id})
-        
+        jwt_token = create_access_token(data={"sub": user_id})
+
         headers = {
             "Authorization": f"Bearer {jwt_token}",
             "Content-Type": "application/json",
@@ -41,15 +56,15 @@ class RunAdkAgentsBloc(TransformerBloc):
         url = f"{self.config.base_url.rstrip('/')}/api/adk/run"
 
         payload = {
-            "agent_name": self.config.agent_id,
-            "user_id": self.config.user_id,
+            "agent_name": agent_id,
+            "user_id": user_id,
             "session_id": str(uuid.uuid4()),
-            "data": self.config.data,
+            "data": data,
             "run_mode": self.config.run_mode,
             "streaming": self.config.streaming,
             "new_message": {
                 "role": "user",
-                "parts": [{"text": self.config.message_text}],
+                "parts": [{"text": message_text}],
             },
         }
 
@@ -58,7 +73,7 @@ class RunAdkAgentsBloc(TransformerBloc):
             response.raise_for_status()
             result = response.json()
             run_context.context_vars[f"{self.name}_result"] = result
-            logger.info(f"Successfully ran agent '{self.config.agent_id}' with session '{payload['session_id']}'")
+            logger.info(f"Successfully ran agent '{agent_id}' with session '{payload['session_id']}'")
             logger.debug("Agent response: %s", result)
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to run ADK agent: {e}")
