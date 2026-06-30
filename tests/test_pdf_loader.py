@@ -50,6 +50,23 @@ def test_missing_file_raises():
         bloc.execute(RunContext())
 
 
+def test_corrupt_pdf_raises(tmp_path):
+    """A non-PDF / corrupt file is caught and re-raised (with file_path logged),
+    not swallowed nor leaked outside execute()."""
+    bad = tmp_path / "not_a.pdf"
+    bad.write_text("this is not a pdf")
+    bloc = PdfLoaderBloc(name="pdf", config={"file_path": str(bad)})
+    with pytest.raises(Exception):
+        bloc.execute(RunContext())
+
+
+def test_negative_pages_rejected_by_schema():
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        PdfLoaderBloc(name="pdf", config={"file_path": FIXTURE, "pages": [-1]})
+
+
 def test_registered_as_bloc_factory():
     from th2etl.pipelines.pipeline import build_bloc_from_record
 

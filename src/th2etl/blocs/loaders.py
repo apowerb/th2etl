@@ -2,19 +2,16 @@ from __future__ import annotations
 
 import logging
 import csv
-import json
-from typing import Any, Sequence
+from typing import Any
 
-import psycopg
+import pypdf
 import requests
-from psycopg.rows import dict_row
+from pypdf import PdfReader
 
 from th2etl.blocs.base import LoaderBloc
 from th2etl.pipelines.context import RunContext
-from th2etl.configs.settings import get_settings
 from th2etl.blocs.schemas import (
     CsvLoaderConfig,
-    PostgresLoaderConfig,
     ApiLoaderConfig,
     PdfLoaderConfig,
 )
@@ -66,22 +63,25 @@ class PdfLoaderBloc(LoaderBloc):
         self.config = PdfLoaderConfig(**(config or {}))
 
     def execute(self, run_context: RunContext) -> None:
-        from pypdf import PdfReader
-
         logger.info(f"Extracting text from PDF file: {self.config.file_path}")
         try:
             reader = PdfReader(self.config.file_path)
+            total_pages = len(reader.pages)
+            if self.config.pages is None:
+                indices = range(total_pages)
+            else:
+                indices = [p for p in self.config.pages if 0 <= p < total_pages]
+            pages_text = [reader.pages[i].extract_text() or "" for i in indices]
         except FileNotFoundError:
             logger.error(f"PDF file not found at: {self.config.file_path}")
             raise
+        except pypdf.errors.PyPdfError as e:
+            logger.error(f"Failed to read PDF {self.config.file_path}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to extract text from {self.config.file_path}: {e}")
+            raise
 
-        total_pages = len(reader.pages)
-        if self.config.pages is None:
-            indices = range(total_pages)
-        else:
-            indices = [p for p in self.config.pages if 0 <= p < total_pages]
-
-        pages_text = [reader.pages[i].extract_text() or "" for i in indices]
         run_context.context_vars[f"{self.name}_pages"] = pages_text
         run_context.context_vars[f"{self.name}_text"] = "\n".join(pages_text)
         logger.info(f"Extracted text from {len(pages_text)} page(s) of {self.config.file_path}")

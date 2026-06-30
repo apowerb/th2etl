@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 from pydantic import BaseModel, Field
 
 
@@ -28,7 +28,7 @@ class PdfLoaderConfig(BaseBlocConfig):
     """Configuration for extracting text from a PDF file."""
 
     file_path: str = Field(..., description="The path to the PDF file to load.")
-    pages: list[int] | None = Field(
+    pages: list[Annotated[int, Field(ge=0)]] | None = Field(
         None,
         description="Optional 0-indexed subset of pages to extract. Extracts all pages when omitted.",
     )
