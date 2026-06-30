@@ -61,6 +61,18 @@ def test_failed_run_records_failure_and_error(storage, monkeypatch):
     assert "bloc exploded" in (last.get("error") or "")
 
 
+def test_run_marked_failed_when_pipeline_missing(storage, monkeypatch):
+    """If the pipeline is deleted between trigger and execution, the run is
+    marked failed (graceful) rather than left dangling."""
+    def _raise(st, name):
+        raise ValueError(f"Pipeline {name!r} does not exist")
+
+    monkeypatch.setattr(runner_mod, "build_pipeline_from_database", _raise)
+    execute_pipeline_run(run_id=9, pipeline_name="gone", variables={})
+    assert _statuses(storage) == [RunStatus.RUNNING.value, RunStatus.FAILED.value]
+    assert "does not exist" in (storage.updates[-1].get("error") or "")
+
+
 def test_variables_are_passed_into_run_context(storage, monkeypatch):
     captured = {}
 

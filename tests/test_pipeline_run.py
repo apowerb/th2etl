@@ -51,6 +51,7 @@ class FakeStorage:
         return self.runs.get(run_id)
 
     def list_pipeline_runs(self, pipeline_name: str, limit: int = 50) -> list[RunRecord]:
+        self.last_limit = limit
         return [r for r in self.runs.values() if r.pipeline_name == pipeline_name]
 
     def update_pipeline_run(self, run_id: int, **fields) -> RunRecord:
@@ -128,3 +129,10 @@ def test_list_runs(client, fake):
     resp = client.get("/pipelines/agents/runs")
     assert resp.status_code == 200
     assert len(resp.json()) == 2
+
+
+def test_list_runs_forwards_limit(client, fake):
+    fake.add_pipeline("agents")
+    resp = client.get("/pipelines/agents/runs?limit=5")
+    assert resp.status_code == 200
+    assert fake.last_limit == 5
