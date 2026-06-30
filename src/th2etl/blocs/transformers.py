@@ -96,7 +96,8 @@ class RunAdkFromJwtBloc(TransformerBloc):
         cv = run_context.context_vars
         jwt_token = cv.get("jwt_token") or self.config.jwt_token
         agent_id = cv.get("agent_id") or self.config.agent_id
-        data = cv.get("agent_meta") or cv.get("data") or self.config.data
+        # presence test (not truthiness) so an explicit empty {} is honoured
+        data = cv.get("agent_meta", cv.get("data", self.config.data))
 
         if not jwt_token:
             raise ValueError(

@@ -15,6 +15,13 @@ its own.
 CONCURRENCY — not safe to run concurrently: ``get`` then ``create`` is not
 atomic, so two simultaneous runs can hit a UNIQUE violation. Run it once.
 
+EXISTING DEPLOYMENTS — the seed is idempotent (it SKIPS existing blocs), so an
+instance previously seeded with ``run_adk_agents`` agent blocs will NOT be
+switched to ``run_adk_from_jwt`` automatically. Migrate it manually::
+
+    UPDATE etl_blocs SET bloc_type = 'run_adk_from_jwt'
+    WHERE name IN ('agents_runner', 'pdf_agent');
+
 Run it against a live th2etl database with:
 
     python -m th2etl.seeds.default_pipelines

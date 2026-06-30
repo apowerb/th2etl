@@ -52,6 +52,29 @@ def test_missing_jwt_raises(captured):
     assert "jwt_token" in str(e.value)
 
 
+def test_http_error_propagates_without_setting_result(monkeypatch):
+    class _ErrResp:
+        response = None
+
+        def raise_for_status(self):
+            raise tr.requests.exceptions.RequestException("boom")
+
+        def json(self):
+            return {}
+
+    monkeypatch.setattr(tr.requests, "post", lambda url, headers=None, json=None: _ErrResp())
+    ctx = RunContext(context_vars={"jwt_token": "TOK"})
+    with pytest.raises(tr.requests.exceptions.RequestException):
+        RunAdkFromJwtBloc("a", {"base_url": "https://x"}).execute(ctx)
+    assert "a_result" not in ctx.context_vars
+
+
+def test_empty_agent_meta_is_honoured(captured):
+    bloc = RunAdkFromJwtBloc("a", {"base_url": "https://x"})
+    bloc.execute(RunContext(context_vars={"jwt_token": "T", "agent_meta": {}}))
+    assert captured["payload"]["data"] == {}
+
+
 def test_registered_as_factory():
     from th2etl.pipelines.pipeline import build_bloc_from_record
 
