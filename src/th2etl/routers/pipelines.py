@@ -1,10 +1,15 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
 from th2etl.storage import DatabaseStorage
 from th2etl.configs.settings import get_settings
-from th2etl.schemas.pipelines import PipelineCreateModel, PipelineUpdateModel
+from th2etl.pipelines.runner import execute_pipeline_run
+from th2etl.schemas.pipelines import (
+    PipelineCreateModel,
+    PipelineRunRequest,
+    PipelineUpdateModel,
+)
 
 router = APIRouter()
 
@@ -52,3 +57,48 @@ def update_pipeline(name: str, pipeline: PipelineUpdateModel, db: DatabaseStorag
 def delete_pipeline(name: str, db: DatabaseStorage = Depends(get_db)):
     if not db.delete_pipeline(name):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pipeline not found")
+
+
+@router.post("/{name}/run", status_code=status.HTTP_202_ACCEPTED)
+def run_pipeline(
+    name: str,
+    request: PipelineRunRequest,
+    background_tasks: BackgroundTasks,
+    db: DatabaseStorage = Depends(get_db),
+):
+    """Trigger an ad-hoc run of a pipeline with runtime variables.
+
+    Creates a run record (status=pending), schedules execution in the
+    background, and returns immediately so the caller can poll the run.
+
+    Durability note: execution uses FastAPI BackgroundTasks, which are NOT
+    durable. If the process dies after the 202 response but before/while the
+    task runs, the run stays `pending` with no automatic recovery — poll for
+    `pending` runs older than your expected runtime and re-trigger if needed.
+    A durable queue (e.g. ARQ/Celery) is the follow-up for at-least-once.
+
+    The pipeline is re-resolved at execution time, so if it is deleted between
+    this check and the background run, the run is simply marked `failed`
+    (no corruption) rather than producing a dangling run.
+    """
+    if db.get_pipeline(name) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pipeline not found")
+
+    run = db.create_pipeline_run(pipeline_name=name, variables=request.variables)
+    background_tasks.add_task(execute_pipeline_run, run.id, name, request.variables)
+    return {"run_id": run.id, "pipeline_name": name, "status": run.status}
+
+
+@router.get("/{name}/runs")
+def list_pipeline_runs(name: str, limit: int = 50, db: DatabaseStorage = Depends(get_db)):
+    if db.get_pipeline(name) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Pipeline not found")
+    return db.list_pipeline_runs(name, limit=limit)
+
+
+@router.get("/{name}/runs/{run_id}")
+def get_pipeline_run(name: str, run_id: int, db: DatabaseStorage = Depends(get_db)):
+    run = db.get_pipeline_run(run_id)
+    if run is None or run.pipeline_name != name:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    return run

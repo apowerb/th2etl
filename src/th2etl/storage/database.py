@@ -4,6 +4,7 @@ import json
 import logging
 from dataclasses import dataclass
 from datetime import datetime
+from enum import Enum
 from typing import Any, Callable
 
 import psycopg
@@ -12,6 +13,15 @@ from psycopg.rows import dict_row
 from th2etl.configs.settings import Settings
 
 logger = logging.getLogger(__name__)
+
+
+class RunStatus(str, Enum):
+    """Lifecycle states of a pipeline run."""
+
+    PENDING = "pending"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILED = "failed"
 
 
 @dataclass
@@ -56,6 +66,20 @@ class SchedulerRecord:
     description: str | None
     created_at: str
     updated_at: str
+
+
+@dataclass
+class RunRecord:
+    id: int | None
+    pipeline_name: str
+    status: str
+    variables: dict[str, Any]
+    result: dict[str, Any] | None
+    error: str | None
+    created_at: str
+    updated_at: str
+    started_at: str | None
+    finished_at: str | None
 
 
 class DatabaseStorage:
@@ -123,7 +147,9 @@ class DatabaseStorage:
         pipelines_table = self._table_name("pipelines")
         triggers_table = self._table_name("triggers")
         schedulers_table = self._table_name("schedulers")
-        
+        runs_table = self._table_name("pipeline_runs")
+        runs_index = runs_table.replace(".", "_")
+
         with self.connection.cursor() as cur:
             cur.execute(
                 f"""
@@ -166,6 +192,22 @@ class DatabaseStorage:
                     created_at TIMESTAMPTZ NOT NULL,
                     updated_at TIMESTAMPTZ NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS {runs_table} (
+                    id SERIAL PRIMARY KEY,
+                    pipeline_name TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    variables JSONB NOT NULL,
+                    result JSONB,
+                    error TEXT,
+                    created_at TIMESTAMPTZ NOT NULL,
+                    updated_at TIMESTAMPTZ NOT NULL,
+                    started_at TIMESTAMPTZ,
+                    finished_at TIMESTAMPTZ
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_{runs_index}_pipeline_name
+                    ON {runs_table}(pipeline_name);
                 """
             )
         self.connection.commit()
@@ -236,6 +278,92 @@ class DatabaseStorage:
             created_at=row["created_at"].isoformat() if row["created_at"] else "",
             updated_at=row["updated_at"].isoformat() if row["updated_at"] else "",
         )
+
+    def _row_to_run(self, row: dict[str, Any]) -> RunRecord:
+        return RunRecord(
+            id=row["id"],
+            pipeline_name=row["pipeline_name"],
+            status=row["status"],
+            variables=row["variables"],
+            result=row["result"],
+            error=row["error"],
+            created_at=row["created_at"].isoformat() if row["created_at"] else "",
+            updated_at=row["updated_at"].isoformat() if row["updated_at"] else "",
+            started_at=row["started_at"].isoformat() if row["started_at"] else None,
+            finished_at=row["finished_at"].isoformat() if row["finished_at"] else None,
+        )
+
+    def create_pipeline_run(
+        self,
+        pipeline_name: str,
+        variables: dict[str, Any] | None = None,
+    ) -> RunRecord:
+        now = self._now()
+        runs_table = self._table_name("pipeline_runs")
+        row = self._execute(
+            f"INSERT INTO {runs_table} (pipeline_name, status, variables, created_at, updated_at) "
+            f"VALUES (%s, %s, %s, %s, %s) RETURNING *",
+            (
+                pipeline_name,
+                RunStatus.PENDING.value,
+                self._serialize(variables or {}),
+                now,
+                now,
+            ),
+        )
+        assert row is not None
+        return self._row_to_run(row)
+
+    def get_pipeline_run(self, run_id: int) -> RunRecord | None:
+        runs_table = self._table_name("pipeline_runs")
+        row = self._query_one(f"SELECT * FROM {runs_table} WHERE id = %s", (run_id,))
+        return self._row_to_run(row) if row else None
+
+    def list_pipeline_runs(self, pipeline_name: str, limit: int = 50) -> list[RunRecord]:
+        runs_table = self._table_name("pipeline_runs")
+        rows = self._query_all(
+            f"SELECT * FROM {runs_table} WHERE pipeline_name = %s ORDER BY id DESC LIMIT %s",
+            (pipeline_name, limit),
+        )
+        return [self._row_to_run(row) for row in rows]
+
+    def update_pipeline_run(
+        self,
+        run_id: int,
+        *,
+        status: str | None = None,
+        result: dict[str, Any] | None = None,
+        error: str | None = None,
+        started_at: str | None = None,
+        finished_at: str | None = None,
+    ) -> RunRecord:
+        set_clauses = ["updated_at = %s"]
+        params: list[Any] = [self._now()]
+        if status is not None:
+            set_clauses.append("status = %s")
+            params.append(status)
+        if result is not None:
+            set_clauses.append("result = %s")
+            params.append(self._serialize(result))
+        if error is not None:
+            set_clauses.append("error = %s")
+            params.append(error)
+        if started_at is not None:
+            set_clauses.append("started_at = %s")
+            params.append(started_at)
+        if finished_at is not None:
+            set_clauses.append("finished_at = %s")
+            params.append(finished_at)
+
+        params.append(run_id)
+        runs_table = self._table_name("pipeline_runs")
+        row = self._execute(
+            f"UPDATE {runs_table} SET {', '.join(set_clauses)} WHERE id = %s RETURNING *",
+            tuple(params),
+        )
+        if row is None:
+            raise ValueError(f"Pipeline run {run_id!r} does not exist")
+        return self._row_to_run(row)
 
     def _query_one(self, query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
         with self.connection.cursor() as cur:
