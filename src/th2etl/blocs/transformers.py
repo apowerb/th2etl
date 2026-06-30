@@ -8,7 +8,7 @@ import requests
 
 from th2etl.blocs.base import TransformerBloc
 from th2etl.pipelines.context import RunContext
-from th2etl.blocs.schemas import RunAdkAgentsConfig, RefreshWebhooksConfig
+from th2etl.blocs.schemas import RunAdkAgentsConfig, RunAdkFromJwtConfig, RefreshWebhooksConfig
 from th2etl.helpers.security import create_access_token
 
 logger = logging.getLogger(__name__)
@@ -77,6 +77,50 @@ class RunAdkAgentsBloc(TransformerBloc):
             logger.debug("Agent response: %s", result)
         except requests.exceptions.RequestException as e:
             logger.error(f"Failed to run ADK agent: {e}")
+            if e.response is not None:
+                logger.error(f"Response status: {e.response.status_code}")
+                logger.error(f"Response body: {e.response.text}")
+            raise
+
+
+class RunAdkFromJwtBloc(TransformerBloc):
+    """Runs an ADK agent from a refresh JWT, faithful to the MageAI flow:
+    forwards the ``jwt_token`` run variable to ``/api/adk/run_from_jwt`` as a
+    Bearer header. th2agent rotates the token after a successful run."""
+
+    def __init__(self, name: str, config: dict[str, Any] | None = None) -> None:
+        super().__init__(name=name)
+        self.config = RunAdkFromJwtConfig(**(config or {}))
+
+    def execute(self, run_context: RunContext) -> None:
+        cv = run_context.context_vars
+        jwt_token = cv.get("jwt_token") or self.config.jwt_token
+        agent_id = cv.get("agent_id") or self.config.agent_id
+        # presence test (not truthiness) so an explicit empty {} is honoured
+        data = cv.get("agent_meta", cv.get("data", self.config.data))
+
+        if not jwt_token:
+            raise ValueError(
+                f"RunAdkFromJwtBloc '{self.name}': missing jwt_token — supply via run variables or bloc config"
+            )
+
+        logger.info(f"Running ADK agent from JWT (agent_id={agent_id})")
+        url = f"{self.config.base_url.rstrip('/')}/api/adk/run_from_jwt"
+        headers = {
+            "Authorization": f"Bearer {jwt_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        payload = {"agent_id": agent_id, "data": data}
+
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            response.raise_for_status()
+            result = response.json()
+            run_context.context_vars[f"{self.name}_result"] = result
+            logger.info(f"Successfully ran agent from JWT (agent_id={agent_id})")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to run ADK agent from JWT: {e}")
             if e.response is not None:
                 logger.error(f"Response status: {e.response.status_code}")
                 logger.error(f"Response body: {e.response.text}")

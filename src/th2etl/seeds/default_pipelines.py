@@ -15,6 +15,13 @@ its own.
 CONCURRENCY — not safe to run concurrently: ``get`` then ``create`` is not
 atomic, so two simultaneous runs can hit a UNIQUE violation. Run it once.
 
+EXISTING DEPLOYMENTS — the seed is idempotent (it SKIPS existing blocs), so an
+instance previously seeded with ``run_adk_agents`` agent blocs will NOT be
+switched to ``run_adk_from_jwt`` automatically. Migrate it manually::
+
+    UPDATE etl_blocs SET bloc_type = 'run_adk_from_jwt'
+    WHERE name IN ('agents_runner', 'pdf_agent');
+
 Run it against a live th2etl database with:
 
     python -m th2etl.seeds.default_pipelines
@@ -38,9 +45,9 @@ PLACEHOLDER = "REPLACE_ME"
 SEED_BLOCS: list[dict[str, Any]] = [
     {
         "name": "agents_runner",
-        "bloc_type": "run_adk_agents",
+        "bloc_type": "run_adk_from_jwt",
         "config": {"base_url": ADK_BASE_URL},
-        "description": "Runs an ADK agent (equivalent of the MageAI 'agents' pipeline). agent_id/user_id/message_text come from run variables.",
+        "description": "Runs an ADK agent from the per-run jwt_token (MageAI 'agents' equivalent). jwt_token/agent_id/agent_meta come from run variables.",
     },
     {
         "name": "pdf_extract",
@@ -50,9 +57,9 @@ SEED_BLOCS: list[dict[str, Any]] = [
     },
     {
         "name": "pdf_agent",
-        "bloc_type": "run_adk_agents",
+        "bloc_type": "run_adk_from_jwt",
         "config": {"base_url": ADK_BASE_URL},
-        "description": "Sends the extracted PDF text to an ADK agent. agent_id/user_id/message_text come from run variables.",
+        "description": "Sends the extracted PDF to an ADK agent from the per-run jwt_token.",
     },
 ]
 

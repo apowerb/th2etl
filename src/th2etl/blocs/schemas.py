@@ -88,6 +88,17 @@ class RunAdkAgentsConfig(BaseBlocConfig):
     streaming: bool = Field(False, description="Whether to use streaming mode.")
 
 
+class RunAdkFromJwtConfig(BaseBlocConfig):
+    """Configuration for running an ADK agent from a refresh JWT (faithful to
+    the MageAI flow: forwards the token to /api/adk/run_from_jwt)."""
+
+    base_url: str = Field(..., description="The base URL of the ADK agent API. Environment-level.")
+    # jwt_token / agent_id / data normally arrive per run via run variables.
+    jwt_token: str | None = Field(None, description="Agent refresh token. Usually supplied per run via the 'jwt_token' run variable.")
+    agent_id: str | None = Field(None, description="Agent id, forwarded for token rotation. Usually a run variable.")
+    data: dict[str, Any] | None = Field(default_factory=dict, description="Optional agent metadata (the 'agent_meta' run variable).")
+
+
 class RefreshWebhooksConfig(BaseBlocConfig):
     """Configuration for refreshing webhooks."""
 

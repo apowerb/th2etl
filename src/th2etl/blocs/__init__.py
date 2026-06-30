@@ -3,7 +3,7 @@ from __future__ import annotations
 from .base import Bloc, BlocType, ExporterBloc, LoaderBloc, TransformerBloc
 from .loaders import CsvLoaderBloc, ApiLoaderBloc, PdfLoaderBloc
 from .postgresql import PostgresLoaderBloc, PostgresExporterBloc
-from .transformers import RunAdkAgentsBloc, RefreshWebhooksBloc
+from .transformers import RunAdkAgentsBloc, RunAdkFromJwtBloc, RefreshWebhooksBloc
 
 __all__ = [
     "Bloc",
@@ -17,5 +17,6 @@ __all__ = [
     "ApiLoaderBloc",
     "PdfLoaderBloc",
     "RunAdkAgentsBloc",
+    "RunAdkFromJwtBloc",
     "RefreshWebhooksBloc",
 ]

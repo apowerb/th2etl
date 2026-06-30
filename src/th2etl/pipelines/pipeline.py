@@ -14,6 +14,7 @@ from th2etl.blocs import (
     ApiLoaderBloc,
     PdfLoaderBloc,
     RunAdkAgentsBloc,
+    RunAdkFromJwtBloc,
     RefreshWebhooksBloc,
 )
 from th2etl.blocs.base import Bloc
@@ -185,6 +186,10 @@ def _run_adk_agents_factory(name: str, config: dict[str, Any]) -> Bloc:
     return RunAdkAgentsBloc(name=name, config=config)
 
 
+def _run_adk_from_jwt_factory(name: str, config: dict[str, Any]) -> Bloc:
+    return RunAdkFromJwtBloc(name=name, config=config)
+
+
 def _refresh_webhooks_factory(name: str, config: dict[str, Any]) -> Bloc:
     return RefreshWebhooksBloc(name=name, config=config)
 
@@ -197,6 +202,7 @@ register_bloc_factory("pdf_loader", _pdf_loader_factory)
 register_bloc_factory("example_transformer", _example_transformer_factory)
 register_bloc_factory("example_exporter", _example_exporter_factory)
 register_bloc_factory("run_adk_agents", _run_adk_agents_factory)
+register_bloc_factory("run_adk_from_jwt", _run_adk_from_jwt_factory)
 register_bloc_factory("refresh_webhooks", _refresh_webhooks_factory)
 
 
