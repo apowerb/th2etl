@@ -89,6 +89,8 @@ def test_cron_fire_records_tracked_run_keyed_by_scheduler():
     statuses = [u["status"] for u in storage.updates if "status" in u]
     assert statuses == [RunStatus.RUNNING.value, RunStatus.SUCCESS.value]
     assert pipe.seen == {"agent_id": "42"}
+    # the finalising update is guarded so a concurrent cancel survives
+    assert storage.updates[-1].get("where_status") == RunStatus.RUNNING.value
 
 
 # --- router: ad-hoc run-now merges stored + request variables ---

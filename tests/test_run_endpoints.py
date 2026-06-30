@@ -13,7 +13,8 @@ from th2etl.storage.database import RunRecord, RunStatus, SchedulerRecord
 
 def _run(run_id=5, status=RunStatus.PENDING.value, scheduler_name="agent42"):
     return RunRecord(
-        id=run_id, pipeline_name="agents", status=status, variables={}, result=None,
+        id=run_id, pipeline_name="agents", status=status,
+        variables={"jwt_token": "SECRET"}, result=None,
         error=None, scheduler_name=scheduler_name, created_at="", updated_at="",
         started_at=None, finished_at=None,
     )
@@ -60,6 +61,12 @@ def test_get_run_by_id(client):
     resp = client.get("/runs/5")
     assert resp.status_code == 200
     assert resp.json()["id"] == 5
+    assert "variables" not in resp.json()  # secrets never returned
+
+
+def test_run_endpoints_never_leak_variables(client):
+    assert "variables" not in client.post("/runs/5/cancel").json()
+    assert all("variables" not in r for r in client.get("/schedulers/agent42/runs").json())
 
 
 def test_get_run_404(client):

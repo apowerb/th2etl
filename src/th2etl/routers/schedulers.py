@@ -8,6 +8,7 @@ from th2etl.storage import DatabaseStorage
 from th2etl.storage.database import SchedulerRecord
 from th2etl.configs.settings import get_settings
 from th2etl.pipelines.runner import execute_pipeline_run
+from th2etl.routers.runs import public_run
 from th2etl.schemas.schedulers import (
     SchedulerCreateModel,
     SchedulerRunModel,
@@ -109,7 +110,7 @@ def run_scheduler_now(
 def list_scheduler_runs(name: str, limit: int = 50, db: DatabaseStorage = Depends(get_db)):
     if db.get_scheduler(name) is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scheduler not found")
-    return db.list_scheduler_runs(name, limit=limit)
+    return [public_run(r) for r in db.list_scheduler_runs(name, limit=limit)]
 
 
 @router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)

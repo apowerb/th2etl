@@ -190,8 +190,14 @@ class CronScheduler:
         if run_id is None or self.storage is None:
             return
         try:
+            # Only finalise a still-running run: if it was cancelled meanwhile,
+            # the guard makes this a no-op so the cancel survives.
             self.storage.update_pipeline_run(
-                run_id, status=status, error=error, finished_at=datetime.now().isoformat()
+                run_id,
+                status=status,
+                error=error,
+                finished_at=datetime.now().isoformat(),
+                where_status=RunStatus.RUNNING.value,
             )
         except Exception:
             logger.exception("Could not finalize run %s for scheduler '%s'", run_id, self.name)

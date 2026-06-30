@@ -371,17 +371,25 @@ class DatabaseStorage:
         return [self._row_to_run(row) for row in rows]
 
     def cancel_pipeline_run(self, run_id: int) -> RunRecord | None:
-        """Best-effort cancel: mark a non-terminal run as cancelled. The
-        background worker is not interrupted, but the run's status reflects the
-        cancellation. Returns None if the run does not exist."""
-        run = self.get_pipeline_run(run_id)
-        if run is None:
-            return None
-        if run.status in (RunStatus.SUCCESS.value, RunStatus.FAILED.value, RunStatus.CANCELLED.value):
-            return run  # already terminal
-        return self.update_pipeline_run(
-            run_id, status=RunStatus.CANCELLED.value, finished_at=self._now()
+        """Best-effort cancel: atomically mark a NON-terminal run as cancelled.
+        The background worker is not interrupted, but the status reflects the
+        cancellation, and a worker finishing afterwards won't overwrite it (it
+        finalises only a still-``running`` run). Returns None if the run does
+        not exist; the unchanged run if it was already terminal."""
+        now = self._now()
+        runs_table = self._table_name("pipeline_runs")
+        row = self._execute(
+            f"UPDATE {runs_table} SET status = %s, finished_at = %s, updated_at = %s "
+            f"WHERE id = %s AND status NOT IN (%s, %s, %s) RETURNING *",
+            (
+                RunStatus.CANCELLED.value, now, now, run_id,
+                RunStatus.SUCCESS.value, RunStatus.FAILED.value, RunStatus.CANCELLED.value,
+            ),
         )
+        if row is not None:
+            return self._row_to_run(row)
+        # not cancelled: either the run doesn't exist, or it was already terminal
+        return self.get_pipeline_run(run_id)
 
     def update_pipeline_run(
         self,
@@ -392,7 +400,13 @@ class DatabaseStorage:
         error: str | None = None,
         started_at: str | None = None,
         finished_at: str | None = None,
-    ) -> RunRecord:
+        where_status: str | None = None,
+    ) -> RunRecord | None:
+        """Update a run. When ``where_status`` is given, the update only applies
+        if the run is currently in that status (a guarded transition, e.g. only
+        finalise a run that is still ``running`` — never overwrite a cancel);
+        returns None when the guard doesn't match. Without a guard, a missing
+        run raises ValueError."""
         set_clauses = ["updated_at = %s"]
         params: list[Any] = [self._now()]
         if status is not None:
@@ -411,13 +425,20 @@ class DatabaseStorage:
             set_clauses.append("finished_at = %s")
             params.append(finished_at)
 
+        where = "id = %s"
         params.append(run_id)
+        if where_status is not None:
+            where += " AND status = %s"
+            params.append(where_status)
+
         runs_table = self._table_name("pipeline_runs")
         row = self._execute(
-            f"UPDATE {runs_table} SET {', '.join(set_clauses)} WHERE id = %s RETURNING *",
+            f"UPDATE {runs_table} SET {', '.join(set_clauses)} WHERE {where} RETURNING *",
             tuple(params),
         )
         if row is None:
+            if where_status is not None:
+                return None  # guard didn't match (already terminal/cancelled)
             raise ValueError(f"Pipeline run {run_id!r} does not exist")
         return self._row_to_run(row)
 
