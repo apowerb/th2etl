@@ -38,9 +38,9 @@ PLACEHOLDER = "REPLACE_ME"
 SEED_BLOCS: list[dict[str, Any]] = [
     {
         "name": "agents_runner",
-        "bloc_type": "run_adk_agents",
+        "bloc_type": "run_adk_from_jwt",
         "config": {"base_url": ADK_BASE_URL},
-        "description": "Runs an ADK agent (equivalent of the MageAI 'agents' pipeline). agent_id/user_id/message_text come from run variables.",
+        "description": "Runs an ADK agent from the per-run jwt_token (MageAI 'agents' equivalent). jwt_token/agent_id/agent_meta come from run variables.",
     },
     {
         "name": "pdf_extract",
@@ -50,9 +50,9 @@ SEED_BLOCS: list[dict[str, Any]] = [
     },
     {
         "name": "pdf_agent",
-        "bloc_type": "run_adk_agents",
+        "bloc_type": "run_adk_from_jwt",
         "config": {"base_url": ADK_BASE_URL},
-        "description": "Sends the extracted PDF text to an ADK agent. agent_id/user_id/message_text come from run variables.",
+        "description": "Sends the extracted PDF to an ADK agent from the per-run jwt_token.",
     },
 ]
 
