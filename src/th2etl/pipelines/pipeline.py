@@ -12,6 +12,7 @@ from th2etl.blocs import (
     PostgresLoaderBloc,
     PostgresExporterBloc,
     ApiLoaderBloc,
+    PdfLoaderBloc,
     RunAdkAgentsBloc,
     RefreshWebhooksBloc,
 )
@@ -168,6 +169,10 @@ def _api_loader_factory(name: str, config: dict[str, Any]) -> Bloc:
     return ApiLoaderBloc(name=name, config=config)
 
 
+def _pdf_loader_factory(name: str, config: dict[str, Any]) -> Bloc:
+    return PdfLoaderBloc(name=name, config=config)
+
+
 def _example_transformer_factory(name: str, config: dict[str, Any]) -> Bloc:
     return ExampleTransformer(name=name, config=config)
 
@@ -188,6 +193,7 @@ register_bloc_factory("csv_loader", _csv_loader_factory)
 register_bloc_factory("postgres_loader", _postgres_loader_factory)
 register_bloc_factory("postgres_exporter", _postgres_exporter_factory)
 register_bloc_factory("api_loader", _api_loader_factory)
+register_bloc_factory("pdf_loader", _pdf_loader_factory)
 register_bloc_factory("example_transformer", _example_transformer_factory)
 register_bloc_factory("example_exporter", _example_exporter_factory)
 register_bloc_factory("run_adk_agents", _run_adk_agents_factory)

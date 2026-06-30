@@ -2,17 +2,19 @@ from __future__ import annotations
 
 import logging
 import csv
-import json
-from typing import Any, Sequence
+from typing import Any
 
-import psycopg
+import pypdf
 import requests
-from psycopg.rows import dict_row
+from pypdf import PdfReader
 
 from th2etl.blocs.base import LoaderBloc
 from th2etl.pipelines.context import RunContext
-from th2etl.configs.settings import get_settings
-from th2etl.blocs.schemas import CsvLoaderConfig, PostgresLoaderConfig, ApiLoaderConfig
+from th2etl.blocs.schemas import (
+    CsvLoaderConfig,
+    ApiLoaderConfig,
+    PdfLoaderConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,47 @@ class CsvLoaderBloc(LoaderBloc):
         except Exception as e:
             logger.error(f"Failed to load data from {self.config.file_path}: {e}")
             raise
+
+
+class PdfLoaderBloc(LoaderBloc):
+    """Extracts text from a PDF file into the run context.
+
+    Writes two context variables:
+      - ``{name}_text``  : the full extracted text (pages joined by newlines)
+      - ``{name}_pages`` : the per-page extracted text as a list of strings
+    """
+
+    def __init__(
+        self,
+        name: str,
+        config: dict[str, Any] | None = None,
+    ) -> None:
+        super().__init__(name=name)
+        self.config = PdfLoaderConfig(**(config or {}))
+
+    def execute(self, run_context: RunContext) -> None:
+        logger.info(f"Extracting text from PDF file: {self.config.file_path}")
+        try:
+            reader = PdfReader(self.config.file_path)
+            total_pages = len(reader.pages)
+            if self.config.pages is None:
+                indices = range(total_pages)
+            else:
+                indices = [p for p in self.config.pages if 0 <= p < total_pages]
+            pages_text = [reader.pages[i].extract_text() or "" for i in indices]
+        except FileNotFoundError:
+            logger.error(f"PDF file not found at: {self.config.file_path}")
+            raise
+        except pypdf.errors.PyPdfError as e:
+            logger.error(f"Failed to read PDF {self.config.file_path}: {e}")
+            raise
+        except Exception as e:
+            logger.error(f"Failed to extract text from {self.config.file_path}: {e}")
+            raise
+
+        run_context.context_vars[f"{self.name}_pages"] = pages_text
+        run_context.context_vars[f"{self.name}_text"] = "\n".join(pages_text)
+        logger.info(f"Extracted text from {len(pages_text)} page(s) of {self.config.file_path}")
 
 
 class ApiLoaderBloc(LoaderBloc):

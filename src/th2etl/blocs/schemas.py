@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Annotated, Any, Literal
 from pydantic import BaseModel, Field
 
 
@@ -32,6 +32,16 @@ class PostgresExporterConfig(BaseBlocConfig):
     db_schema: str | None = Field(None, description="Optional destination schema.")
     if_exists: Literal["fail", "replace", "append"] = Field(
         "replace", description="pandas to_sql behaviour when the table exists."
+    )
+
+
+class PdfLoaderConfig(BaseBlocConfig):
+    """Configuration for extracting text from a PDF file."""
+
+    file_path: str = Field(..., description="The path to the PDF file to load.")
+    pages: list[Annotated[int, Field(ge=0)]] | None = Field(
+        None,
+        description="Optional 0-indexed subset of pages to extract. Extracts all pages when omitted.",
     )
 
 
