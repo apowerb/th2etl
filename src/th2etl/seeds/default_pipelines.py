@@ -22,43 +22,37 @@ Run it against a live th2etl database with:
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Placeholders — set these to real values before going live (don't ship the
-# DEV URL by accident: keep it an explicit REPLACE_ME so it can't be missed).
-DEFAULT_AGENT_BASE_URL = "REPLACE_ME_BASE_URL"
+# base_url is environment-level: set ADK_BASE_URL per deployment
+# (e.g. https://api-agent-dev.thaink2.fr on DEV, https://api-agent.thaink2.fr
+# on prod). agent_id / user_id / message_text are NOT seeded — they are
+# supplied per run as run variables (RunAdkAgentsBloc resolves them at run
+# time). The PDF file_path is likewise a per-run value.
+ADK_BASE_URL = os.environ.get("ADK_BASE_URL", "REPLACE_ME_BASE_URL")
 PLACEHOLDER = "REPLACE_ME"
 
 SEED_BLOCS: list[dict[str, Any]] = [
     {
         "name": "agents_runner",
         "bloc_type": "run_adk_agents",
-        "config": {
-            "base_url": DEFAULT_AGENT_BASE_URL,
-            "agent_id": PLACEHOLDER,
-            "user_id": PLACEHOLDER,
-            "message_text": PLACEHOLDER,
-        },
-        "description": "Runs an ADK agent (equivalent of the MageAI 'agents' pipeline).",
+        "config": {"base_url": ADK_BASE_URL},
+        "description": "Runs an ADK agent (equivalent of the MageAI 'agents' pipeline). agent_id/user_id/message_text come from run variables.",
     },
     {
         "name": "pdf_extract",
         "bloc_type": "pdf_loader",
         "config": {"file_path": PLACEHOLDER},
-        "description": "Extracts text from a PDF into the run context.",
+        "description": "Extracts text from a PDF into the run context (file_path supplied per run).",
     },
     {
         "name": "pdf_agent",
         "bloc_type": "run_adk_agents",
-        "config": {
-            "base_url": DEFAULT_AGENT_BASE_URL,
-            "agent_id": PLACEHOLDER,
-            "user_id": PLACEHOLDER,
-            "message_text": PLACEHOLDER,
-        },
-        "description": "Sends the extracted PDF text to an ADK agent.",
+        "config": {"base_url": ADK_BASE_URL},
+        "description": "Sends the extracted PDF text to an ADK agent. agent_id/user_id/message_text come from run variables.",
     },
 ]
 
