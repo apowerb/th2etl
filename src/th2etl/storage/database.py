@@ -22,6 +22,7 @@ class RunStatus(str, Enum):
     RUNNING = "running"
     SUCCESS = "success"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -78,6 +79,7 @@ class RunRecord:
     variables: dict[str, Any]
     result: dict[str, Any] | None
     error: str | None
+    scheduler_name: str | None
     created_at: str
     updated_at: str
     started_at: str | None
@@ -204,6 +206,7 @@ class DatabaseStorage:
                     variables JSONB NOT NULL,
                     result JSONB,
                     error TEXT,
+                    scheduler_name TEXT,
                     created_at TIMESTAMPTZ NOT NULL,
                     updated_at TIMESTAMPTZ NOT NULL,
                     started_at TIMESTAMPTZ,
@@ -225,12 +228,16 @@ class DatabaseStorage:
     def _apply_migrations(self, schedulers_table: str) -> None:
         if DatabaseStorage._migrated:
             return
+        runs_table = self._table_name("pipeline_runs")
         with self.connection.cursor() as cur:
             cur.execute(
                 f"ALTER TABLE {schedulers_table} ADD COLUMN IF NOT EXISTS variables JSONB NOT NULL DEFAULT '{{}}'"
             )
             cur.execute(
                 f"ALTER TABLE {schedulers_table} ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE"
+            )
+            cur.execute(
+                f"ALTER TABLE {runs_table} ADD COLUMN IF NOT EXISTS scheduler_name TEXT"
             )
         self.connection.commit()
         DatabaseStorage._migrated = True
@@ -312,6 +319,7 @@ class DatabaseStorage:
             variables=row["variables"],
             result=row["result"],
             error=row["error"],
+            scheduler_name=row.get("scheduler_name"),
             created_at=row["created_at"].isoformat() if row["created_at"] else "",
             updated_at=row["updated_at"].isoformat() if row["updated_at"] else "",
             started_at=row["started_at"].isoformat() if row["started_at"] else None,
@@ -322,16 +330,18 @@ class DatabaseStorage:
         self,
         pipeline_name: str,
         variables: dict[str, Any] | None = None,
+        scheduler_name: str | None = None,
     ) -> RunRecord:
         now = self._now()
         runs_table = self._table_name("pipeline_runs")
         row = self._execute(
-            f"INSERT INTO {runs_table} (pipeline_name, status, variables, created_at, updated_at) "
-            f"VALUES (%s, %s, %s, %s, %s) RETURNING *",
+            f"INSERT INTO {runs_table} (pipeline_name, status, variables, scheduler_name, created_at, updated_at) "
+            f"VALUES (%s, %s, %s, %s, %s, %s) RETURNING *",
             (
                 pipeline_name,
                 RunStatus.PENDING.value,
                 self._serialize(variables or {}),
+                scheduler_name,
                 now,
                 now,
             ),
@@ -351,6 +361,27 @@ class DatabaseStorage:
             (pipeline_name, limit),
         )
         return [self._row_to_run(row) for row in rows]
+
+    def list_scheduler_runs(self, scheduler_name: str, limit: int = 50) -> list[RunRecord]:
+        runs_table = self._table_name("pipeline_runs")
+        rows = self._query_all(
+            f"SELECT * FROM {runs_table} WHERE scheduler_name = %s ORDER BY id DESC LIMIT %s",
+            (scheduler_name, limit),
+        )
+        return [self._row_to_run(row) for row in rows]
+
+    def cancel_pipeline_run(self, run_id: int) -> RunRecord | None:
+        """Best-effort cancel: mark a non-terminal run as cancelled. The
+        background worker is not interrupted, but the run's status reflects the
+        cancellation. Returns None if the run does not exist."""
+        run = self.get_pipeline_run(run_id)
+        if run is None:
+            return None
+        if run.status in (RunStatus.SUCCESS.value, RunStatus.FAILED.value, RunStatus.CANCELLED.value):
+            return run  # already terminal
+        return self.update_pipeline_run(
+            run_id, status=RunStatus.CANCELLED.value, finished_at=self._now()
+        )
 
     def update_pipeline_run(
         self,

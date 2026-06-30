@@ -98,9 +98,18 @@ def run_scheduler_now(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scheduler not found")
 
     merged = {**scheduler.variables, **body.variables}
-    run = db.create_pipeline_run(pipeline_name=scheduler.pipeline_name, variables=merged)
+    run = db.create_pipeline_run(
+        pipeline_name=scheduler.pipeline_name, variables=merged, scheduler_name=name
+    )
     background_tasks.add_task(execute_pipeline_run, run.id, scheduler.pipeline_name, merged)
     return {"run_id": run.id, "pipeline_name": scheduler.pipeline_name, "status": run.status}
+
+
+@router.get("/{name}/runs")
+def list_scheduler_runs(name: str, limit: int = 50, db: DatabaseStorage = Depends(get_db)):
+    if db.get_scheduler(name) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scheduler not found")
+    return db.list_scheduler_runs(name, limit=limit)
 
 
 @router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)

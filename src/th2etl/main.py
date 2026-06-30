@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import threading
 
 from fastapi import FastAPI, Depends, HTTPException, status
-from th2etl.routers import blocs, pipelines, schedulers, triggers
+from th2etl.routers import blocs, pipelines, runs, schedulers, triggers
 from th2etl.storage import DatabaseStorage
 from th2etl.configs.settings import get_settings
 from th2etl.scheduler.helpers import load_scheduler_manager
@@ -51,6 +51,7 @@ app.include_router(blocs.router, prefix="/blocs", tags=["blocs"])
 app.include_router(pipelines.router, prefix="/pipelines", tags=["pipelines"])
 app.include_router(triggers.router, prefix="/triggers", tags=["triggers"])
 app.include_router(schedulers.router, prefix="/schedulers", tags=["schedulers"])
+app.include_router(runs.router, prefix="/runs", tags=["runs"])
 
 @app.get("/", tags=["root"])
 def read_root():
