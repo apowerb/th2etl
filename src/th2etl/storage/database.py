@@ -197,10 +197,6 @@ class DatabaseStorage:
                     updated_at TIMESTAMPTZ NOT NULL
                 );
 
-                -- idempotent migration for schedulers created before runtime variables
-                ALTER TABLE {schedulers_table} ADD COLUMN IF NOT EXISTS variables JSONB NOT NULL DEFAULT '{{}}';
-                ALTER TABLE {schedulers_table} ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE;
-
                 CREATE TABLE IF NOT EXISTS {runs_table} (
                     id SERIAL PRIMARY KEY,
                     pipeline_name TEXT NOT NULL,
@@ -219,6 +215,25 @@ class DatabaseStorage:
                 """
             )
         self.connection.commit()
+        self._apply_migrations(schedulers_table)
+
+    # Run-once-per-process migrations. ALTER TABLE takes an ACCESS EXCLUSIVE
+    # lock, so it must NOT run on every request — only once when the process
+    # first opens a connection.
+    _migrated: bool = False
+
+    def _apply_migrations(self, schedulers_table: str) -> None:
+        if DatabaseStorage._migrated:
+            return
+        with self.connection.cursor() as cur:
+            cur.execute(
+                f"ALTER TABLE {schedulers_table} ADD COLUMN IF NOT EXISTS variables JSONB NOT NULL DEFAULT '{{}}'"
+            )
+            cur.execute(
+                f"ALTER TABLE {schedulers_table} ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE"
+            )
+        self.connection.commit()
+        DatabaseStorage._migrated = True
 
     def _now(self) -> str:
         return datetime.utcnow().isoformat()

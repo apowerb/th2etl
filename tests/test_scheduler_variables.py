@@ -63,18 +63,32 @@ def test_manager_skips_inactive_schedulers():
 
 # --- router: ad-hoc run-now merges stored + request variables ---
 
+def _record(name="s1", variables=None):
+    return SchedulerRecord(
+        id=1, name=name, pipeline_name="agents", trigger_name="t", description=None,
+        variables=variables if variables is not None else {"agent_id": "stored", "jwt_token": "old"},
+        active=True, created_at="", updated_at="",
+    )
+
+
 class _FakeStorage:
     def __init__(self) -> None:
         self.created_run_vars: dict | None = None
+        self.updated_vars: dict | None = None
 
     def get_scheduler(self, name: str):
         if name == "missing":
             return None
-        return SchedulerRecord(
-            id=1, name=name, pipeline_name="agents", trigger_name="t", description=None,
-            variables={"agent_id": "stored", "jwt_token": "old"}, active=True,
-            created_at="", updated_at="",
-        )
+        return _record(name)
+
+    def list_schedulers(self):
+        return [_record("s1")]
+
+    def update_scheduler_variables(self, name, variables):
+        if name == "missing":
+            raise ValueError(f"Scheduler {name!r} does not exist")
+        self.updated_vars = variables
+        return _record(name, variables=variables)
 
     def create_pipeline_run(self, pipeline_name, variables=None):
         self.created_run_vars = variables
@@ -112,3 +126,19 @@ def test_run_now_merges_stored_and_request_variables(client):
 
 def test_run_now_unknown_scheduler_404(client):
     assert client.post("/schedulers/missing/run", json={}).status_code == 404
+
+
+def test_update_variables_replaces_and_returns_without_secrets(client):
+    resp = client.put("/schedulers/s1/variables", json={"variables": {"jwt_token": "rotated"}})
+    assert resp.status_code == 200
+    assert client.fake.updated_vars == {"jwt_token": "rotated"}
+    assert "variables" not in resp.json()  # secrets never returned
+
+
+def test_update_variables_unknown_404(client):
+    assert client.put("/schedulers/missing/variables", json={"variables": {}}).status_code == 404
+
+
+def test_get_and_list_do_not_leak_variables(client):
+    assert "variables" not in client.get("/schedulers/s1").json()
+    assert all("variables" not in s for s in client.get("/schedulers/").json())

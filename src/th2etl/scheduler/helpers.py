@@ -110,7 +110,17 @@ class CronTrigger:
 
 
 class CronScheduler:
-    def __init__(self, pipeline: Pipeline, trigger: CronTrigger, name: str | None = None, trigger_name: str | None = None, settings: Settings | None = None, pipeline_name: str | None = None, variables: dict | None = None, active: bool = True) -> None:
+    def __init__(
+        self,
+        pipeline: Pipeline,
+        trigger: CronTrigger,
+        name: str | None = None,
+        trigger_name: str | None = None,
+        settings: Settings | None = None,
+        pipeline_name: str | None = None,
+        variables: dict | None = None,
+        active: bool = True,
+    ) -> None:
         self.pipeline = pipeline
         self.pipeline_name = pipeline_name
         self.trigger = trigger
@@ -468,6 +478,11 @@ def start_scheduler_manager_from_database(
     manager.start()
 
 
-def schedule_pipeline(pipeline: Pipeline, expression: str) -> CronScheduler:
+def schedule_pipeline(
+    pipeline: Pipeline,
+    expression: str,
+    variables: dict | None = None,
+    active: bool = True,
+) -> CronScheduler:
     trigger = CronTrigger(expression)
-    return CronScheduler(pipeline=pipeline, trigger=trigger)
+    return CronScheduler(pipeline=pipeline, trigger=trigger, variables=variables, active=active)
