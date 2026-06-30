@@ -4,7 +4,7 @@ import logging
 import time
 from concurrent.futures import Future, ThreadPoolExecutor
 from datetime import datetime, timedelta
-from typing import Iterable, Sequence
+from typing import Sequence
 from pathlib import Path
 import threading
 

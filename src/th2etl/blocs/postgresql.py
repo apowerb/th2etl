@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+from functools import lru_cache
 from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 
 from th2etl.blocs.base import ExporterBloc, LoaderBloc
 from th2etl.blocs.schemas import PostgresLoaderConfig, PostgresExporterConfig
@@ -14,6 +16,12 @@ if TYPE_CHECKING:
     from th2etl.pipelines.context import RunContext
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=None)
+def _get_engine(dsn: str) -> Engine:
+    """Return a process-wide engine per DSN (one connection pool, reused)."""
+    return create_engine(dsn)
 
 
 class PostgresLoaderBloc(LoaderBloc):
@@ -29,7 +37,7 @@ class PostgresLoaderBloc(LoaderBloc):
 
     def execute(self, run_context: "RunContext") -> None:
         logger.info("Executing PostgresLoaderBloc: %s", self.name)
-        engine = create_engine(get_settings().database_dsn)
+        engine = _get_engine(get_settings().database_dsn)
         with engine.connect() as connection:
             df = pd.read_sql(self.config.query, connection)
         run_context.context_vars[f"{self.name}_data"] = df.to_dict(orient="records")
@@ -51,12 +59,14 @@ class PostgresExporterBloc(ExporterBloc):
             raise ValueError(f"No data found for source bloc: {self.config.source_bloc}")
 
         df = pd.DataFrame(data)
-        engine = create_engine(get_settings().database_dsn)
-        with engine.connect() as connection:
+        engine = _get_engine(get_settings().database_dsn)
+        # engine.begin() opens a transaction and COMMITS on normal exit
+        # (engine.connect() would roll back on close, dropping the write).
+        with engine.begin() as connection:
             df.to_sql(
                 self.config.table_name,
                 connection,
-                schema=self.config.schema,
+                schema=self.config.db_schema,
                 if_exists=self.config.if_exists,
                 index=False,
             )

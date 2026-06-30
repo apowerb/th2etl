@@ -1,16 +1,12 @@
 from __future__ import annotations
 
 import logging
-from collections import deque
 from typing import Any, Callable, Sequence
-from datetime import datetime
-from pathlib import Path
 import json
 import concurrent.futures
 
 from th2etl.blocs import (
     ExporterBloc,
-    LoaderBloc,
     TransformerBloc,
     CsvLoaderBloc,
     PostgresLoaderBloc,
