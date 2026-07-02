@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 import uuid
 
@@ -9,9 +10,45 @@ import requests
 from th2etl.blocs.base import TransformerBloc
 from th2etl.pipelines.context import RunContext
 from th2etl.blocs.schemas import RunAdkAgentsConfig, RunAdkFromJwtConfig, RefreshWebhooksConfig
+from th2etl.configs.run_logging import log_event
 from th2etl.helpers.security import create_access_token
 
 logger = logging.getLogger(__name__)
+
+
+def _post(bloc_name: str, url: str, *, timeout: float, **kwargs) -> requests.Response:
+    """POST with a mandatory timeout, logging a structured ``bloc.http_call``
+    event (url, status, duration) on both success and failure so a hung, slow,
+    or erroring upstream is visible in the run log instead of silently stalling
+    a run. An HTTP error status (>=400) is logged at ERROR even though
+    ``requests`` does not raise for it — otherwise a 500 from th2agent would be
+    an INFO line indistinguishable from success when filtering by level."""
+    started = time.monotonic()
+    try:
+        response = requests.post(url, timeout=timeout, **kwargs)
+    except requests.exceptions.RequestException as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        log_event(
+            logger,
+            "bloc.http_call",
+            level=logging.ERROR,
+            bloc=bloc_name,
+            url=url,
+            http_status=status,
+            duration_ms=round((time.monotonic() - started) * 1000),
+            error=str(exc),
+        )
+        raise
+    log_event(
+        logger,
+        "bloc.http_call",
+        level=logging.ERROR if response.status_code >= 400 else logging.INFO,
+        bloc=bloc_name,
+        url=url,
+        http_status=response.status_code,
+        duration_ms=round((time.monotonic() - started) * 1000),
+    )
+    return response
 
 
 class RunAdkAgentsBloc(TransformerBloc):
@@ -69,7 +106,7 @@ class RunAdkAgentsBloc(TransformerBloc):
         }
 
         try:
-            response = requests.post(url, headers=headers, json=payload)
+            response = _post(self.name, url, timeout=self.config.http_timeout, headers=headers, json=payload)
             response.raise_for_status()
             result = response.json()
             run_context.context_vars[f"{self.name}_result"] = result
@@ -114,7 +151,7 @@ class RunAdkFromJwtBloc(TransformerBloc):
         payload = {"agent_id": agent_id, "data": data}
 
         try:
-            response = requests.post(url, headers=headers, json=payload)
+            response = _post(self.name, url, timeout=self.config.http_timeout, headers=headers, json=payload)
             response.raise_for_status()
             result = response.json()
             run_context.context_vars[f"{self.name}_result"] = result
@@ -147,7 +184,7 @@ class RefreshWebhooksBloc(TransformerBloc):
         headers = {"Authorization": f"Bearer {jwt_token}"}
         
         try:
-            response = requests.post(self.config.url, headers=headers)
+            response = _post(self.name, self.config.url, timeout=self.config.http_timeout, headers=headers)
             response.raise_for_status()
             result = response.json()
             run_context.context_vars[f"{self.name}_result"] = result

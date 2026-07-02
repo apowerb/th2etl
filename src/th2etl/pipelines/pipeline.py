@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import logging
 from typing import Any, Callable, Sequence
+import contextvars
 import json
+import time
 import concurrent.futures
 
+from th2etl.configs.run_logging import bind_run_context, log_event, reset_run_context
 from th2etl.blocs import (
     ExporterBloc,
     TransformerBloc,
@@ -75,12 +78,43 @@ class Pipeline:
             raise ValueError(f"A bloc named {bloc.name!r} is already registered.")
         self.blocs[bloc.name] = bloc
 
+    def _execute_bloc(self, bloc: Bloc, run_context: RunContext, step: int) -> None:
+        """Run a single bloc with structured start/end/error events. Executed
+        inside a copied context (see ``execute``) so it inherits run_id/pipeline
+        even though it runs in a worker thread (blind spot #5)."""
+        token = bind_run_context(bloc=bloc.name, bloc_type=bloc.type.value, step=step)
+        started = time.monotonic()
+        log_event(logger, "bloc.start", bloc=bloc.name, bloc_type=bloc.type.value, step=step)
+        try:
+            bloc.execute(run_context)
+        except Exception as exc:
+            log_event(
+                logger,
+                "bloc.error",
+                level=logging.ERROR,
+                bloc=bloc.name,
+                error=str(exc),
+                duration_ms=round((time.monotonic() - started) * 1000),
+            )
+            raise
+        else:
+            log_event(
+                logger,
+                "bloc.end",
+                bloc=bloc.name,
+                duration_ms=round((time.monotonic() - started) * 1000),
+            )
+        finally:
+            reset_run_context(token)
+
     def execute(self, run_context: RunContext | None = None) -> RunContext:
         if run_context is None:
             run_context = RunContext()
-        
+
         execution_id = f" for '{run_context.scheduler_name}'" if run_context.scheduler_name else ""
         logger.info("Starting pipeline execution%s", execution_id)
+        pipeline_started = time.monotonic()
+        log_event(logger, "pipeline.start", stages=len(self.stages))
 
         # Ensure output directory exists if provided
         if run_context.output_dir:
@@ -89,16 +123,22 @@ class Pipeline:
 
         for i, stage in enumerate(self.stages):
             logger.info(f"Executing stage {i + 1}/{len(self.stages)}")
+            log_event(logger, "stage.start", step=i + 1, stages=len(self.stages), blocs=len(stage))
+            stage_started = time.monotonic()
             with concurrent.futures.ThreadPoolExecutor() as executor:
                 futures = []
                 for bloc_name in stage:
                     bloc = self.blocs.get(bloc_name)
                     if bloc is None:
                         raise ValueError(f"Bloc {bloc_name!r} not found in pipeline.")
-                    
+
                     logger.info("Submitting bloc %s (%s) for execution", bloc.name, bloc.type.value)
-                    futures.append(executor.submit(bloc.execute, run_context))
-                
+                    # copy_context() at submission time so the worker thread
+                    # inherits the ambient run context (run_id/pipeline). A plain
+                    # executor.submit(bloc.execute, ...) would lose it.
+                    ctx = contextvars.copy_context()
+                    futures.append(executor.submit(ctx.run, self._execute_bloc, bloc, run_context, i + 1))
+
                 # Wait for all blocs in the current stage to complete
                 for future in concurrent.futures.as_completed(futures):
                     try:
@@ -110,8 +150,10 @@ class Pipeline:
                         raise
 
             logger.info(f"Stage {i + 1} completed.")
-            
+            log_event(logger, "stage.end", step=i + 1, duration_ms=round((time.monotonic() - stage_started) * 1000))
+
         logger.info("Pipeline execution completed%s", execution_id)
+        log_event(logger, "pipeline.completed", duration_ms=round((time.monotonic() - pipeline_started) * 1000))
         return run_context
 
 

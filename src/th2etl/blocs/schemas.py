@@ -7,6 +7,13 @@ from pydantic import BaseModel, Field
 class BaseBlocConfig(BaseModel):
     """Base schema for bloc configurations."""
 
+    http_timeout: float = Field(
+        30.0,
+        gt=0,
+        description="Timeout (seconds) for outbound HTTP calls made by the bloc. "
+        "Prevents a hung upstream (e.g. th2agent) from leaving a run 'running' forever.",
+    )
+
     class Config:
         extra = "allow"
 
