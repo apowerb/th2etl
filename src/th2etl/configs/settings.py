@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     log_levels: str | None = Field(None, description="Fine-grained log levels (e.g., 'th2etl.scheduler:INFO,th2etl:WARNING').")
     run_log_json: bool = Field(True, description="Emit structured JSON run logs (one object per line) so stuck runs are diagnosable.")
     run_log_file: str = Field("runs.jsonl", description="File (relative to log_dir) for the structured JSON run log.")
+    run_log_db: bool = Field(True, description="Persist structured run events to a queryable table (etl_pipeline_run_logs) so a run's flow can be fetched per-run via the API.")
 
     # Base URL of the apowerb API the ADK blocs call. The seed reads it to
     # build each bloc's config, and it differs per deployment

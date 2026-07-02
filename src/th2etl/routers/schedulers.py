@@ -113,6 +113,21 @@ def list_scheduler_runs(name: str, limit: int = 50, db: DatabaseStorage = Depend
     return [public_run(r) for r in db.list_scheduler_runs(name, limit=limit)]
 
 
+@router.get("/{name}/runs/{run_id}/logs")
+def get_scheduler_run_logs(
+    name: str, run_id: int, limit: int = 500, db: DatabaseStorage = Depends(get_db)
+):
+    """Return the structured execution log of one of a scheduler's runs. 404s if
+    the scheduler is unknown or the run does not belong to it (so a run_id can't
+    be used to read logs across schedulers)."""
+    if db.get_scheduler(name) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scheduler not found")
+    run = db.get_pipeline_run(run_id)
+    if run is None or run.scheduler_name != name:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found for this scheduler")
+    return [asdict(log) for log in db.list_run_logs(run_id, limit=limit)]
+
+
 @router.delete("/{name}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_scheduler(name: str, db: DatabaseStorage = Depends(get_db)):
     if not db.delete_scheduler(name):
