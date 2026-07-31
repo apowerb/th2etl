@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 import threading
 
 from fastapi import FastAPI, Depends, HTTPException, status
-from th2etl.helpers.api_auth import exiger_cle_api
+from th2etl.helpers.api_auth import require_api_key
 from th2etl.routers import blocs, pipelines, runs, schedulers, triggers
 from th2etl.storage import DatabaseStorage
 from th2etl.configs.settings import get_settings
@@ -48,16 +48,16 @@ def get_db():
     with DatabaseStorage.from_settings(settings) as db:
         yield db
 
-# Les routes metier exigent la cle d'API. Le reglage api_key existait deja et
-# etait renseigne en production, mais rien ne le lisait : l'orchestrateur
-# repondait a tout le monde, /pipelines/{name}/run compris.
-GARDE = [Depends(exiger_cle_api)]
+# The business routes require the API key. The api_key setting already
+# existed and was set in production, but nothing read it: the
+# orchestrator answered anyone, including /pipelines/{name}/run.
+AUTH = [Depends(require_api_key)]
 
-app.include_router(blocs.router, prefix="/blocs", tags=["blocs"], dependencies=GARDE)
-app.include_router(pipelines.router, prefix="/pipelines", tags=["pipelines"], dependencies=GARDE)
-app.include_router(triggers.router, prefix="/triggers", tags=["triggers"], dependencies=GARDE)
-app.include_router(schedulers.router, prefix="/schedulers", tags=["schedulers"], dependencies=GARDE)
-app.include_router(runs.router, prefix="/runs", tags=["runs"], dependencies=GARDE)
+app.include_router(blocs.router, prefix="/blocs", tags=["blocs"], dependencies=AUTH)
+app.include_router(pipelines.router, prefix="/pipelines", tags=["pipelines"], dependencies=AUTH)
+app.include_router(triggers.router, prefix="/triggers", tags=["triggers"], dependencies=AUTH)
+app.include_router(schedulers.router, prefix="/schedulers", tags=["schedulers"], dependencies=AUTH)
+app.include_router(runs.router, prefix="/runs", tags=["runs"], dependencies=AUTH)
 
 @app.get("/", tags=["root"])
 def read_root():

@@ -1,11 +1,11 @@
-"""Authentification des appels entrants sur l'API th2etl.
+"""Authentication for incoming calls to the th2etl API.
 
-Le reglage ``api_key`` existait deja et etait renseigne en production, mais
-aucune ligne ne le lisait : l'API d'orchestration repondait a tout le monde.
-Ce module le branche.
+The ``api_key`` setting already existed and was set in production, but
+nothing read it: the orchestration API answered anyone. This module wires
+it up.
 
-La cle protege les routes metier. ``/`` et ``/health`` restent ouvertes : une
-sonde de disponibilite ne doit pas avoir besoin d'un secret.
+The key protects the business routes. ``/`` and ``/health`` stay open: an
+availability probe should not need a secret.
 """
 from __future__ import annotations
 
@@ -18,40 +18,40 @@ from th2etl.configs.settings import get_settings
 
 logger = logging.getLogger(__name__)
 
-PREFIXE = "Bearer "
+PREFIX = "Bearer "
 
 
-def exiger_cle_api(authorization: str | None = Header(default=None)) -> None:
-    """Refuse la requete si l'en-tete ne porte pas la cle attendue."""
-    attendue = (get_settings().api_key or "").strip()
+def require_api_key(authorization: str | None = Header(default=None)) -> None:
+    """Reject the request if the header does not carry the expected key."""
+    expected = (get_settings().api_key or "").strip()
 
-    # Une chaine vide satisfait la validation pydantic (`api_key: str` accepte
-    # ""), et laisserait donc l'API ouverte a tout le monde sans qu'aucune
-    # erreur ne le signale. On refuse, et on le dit dans les journaux.
-    if not attendue:
+    # An empty string satisfies pydantic validation (`api_key: str` accepts
+    # ""), which would leave the API open to anyone with no error to signal
+    # it. We refuse instead, and log it.
+    if not expected:
         logger.error(
-            "[AUTH] API_KEY vide : toutes les routes metier sont refusees. "
-            "Renseigner API_KEY pour rouvrir le service."
+            "[AUTH] API_KEY is empty: all business routes are refused. "
+            "Set API_KEY to reopen the service."
         )
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Authentification non configuree : renseigner API_KEY.",
+            detail="Authentication not configured: set API_KEY.",
         )
 
-    if not authorization or not authorization.startswith(PREFIXE):
+    if not authorization or not authorization.startswith(PREFIX):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Cle d'API manquante.",
+            detail="Missing API key.",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    fournie = authorization[len(PREFIXE):].strip()
+    provided = authorization[len(PREFIX):].strip()
 
-    # Comparaison a temps constant : `==` s'arrete au premier caractere qui
-    # differe et laisse deviner la cle, mesure apres mesure.
-    if not secrets.compare_digest(fournie, attendue):
+    # Constant-time comparison: `==` stops at the first differing character
+    # and would let the key be guessed one measurement at a time.
+    if not secrets.compare_digest(provided, expected):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Cle d'API invalide.",
+            detail="Invalid API key.",
             headers={"WWW-Authenticate": "Bearer"},
         )
