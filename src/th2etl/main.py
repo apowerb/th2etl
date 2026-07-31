@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import threading
 
 from fastapi import FastAPI, Depends, HTTPException, status
+from th2etl.helpers.api_auth import exiger_cle_api
 from th2etl.routers import blocs, pipelines, runs, schedulers, triggers
 from th2etl.storage import DatabaseStorage
 from th2etl.configs.settings import get_settings
@@ -47,11 +48,16 @@ def get_db():
     with DatabaseStorage.from_settings(settings) as db:
         yield db
 
-app.include_router(blocs.router, prefix="/blocs", tags=["blocs"])
-app.include_router(pipelines.router, prefix="/pipelines", tags=["pipelines"])
-app.include_router(triggers.router, prefix="/triggers", tags=["triggers"])
-app.include_router(schedulers.router, prefix="/schedulers", tags=["schedulers"])
-app.include_router(runs.router, prefix="/runs", tags=["runs"])
+# Les routes metier exigent la cle d'API. Le reglage api_key existait deja et
+# etait renseigne en production, mais rien ne le lisait : l'orchestrateur
+# repondait a tout le monde, /pipelines/{name}/run compris.
+GARDE = [Depends(exiger_cle_api)]
+
+app.include_router(blocs.router, prefix="/blocs", tags=["blocs"], dependencies=GARDE)
+app.include_router(pipelines.router, prefix="/pipelines", tags=["pipelines"], dependencies=GARDE)
+app.include_router(triggers.router, prefix="/triggers", tags=["triggers"], dependencies=GARDE)
+app.include_router(schedulers.router, prefix="/schedulers", tags=["schedulers"], dependencies=GARDE)
+app.include_router(runs.router, prefix="/runs", tags=["runs"], dependencies=GARDE)
 
 @app.get("/", tags=["root"])
 def read_root():
