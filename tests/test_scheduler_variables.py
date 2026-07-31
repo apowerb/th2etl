@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import EN_TETE_AUTH
+from conftest import AUTH_HEADER
 
 from th2etl.main import app, get_db as main_get_db
 from th2etl.routers.schedulers import get_db as sched_get_db
@@ -144,7 +144,7 @@ def client(monkeypatch):
     )
     app.dependency_overrides[main_get_db] = lambda: fake
     app.dependency_overrides[sched_get_db] = lambda: fake
-    c = TestClient(app, headers=EN_TETE_AUTH)
+    c = TestClient(app, headers=AUTH_HEADER)
     c.fake = fake  # type: ignore[attr-defined]
     c.scheduled = scheduled  # type: ignore[attr-defined]
     yield c

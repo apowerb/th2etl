@@ -1,4 +1,4 @@
-"""L'API d'orchestration ne repond qu'a qui presente la cle."""
+"""The orchestration API only answers whoever presents the key."""
 from __future__ import annotations
 
 import ast
@@ -8,34 +8,34 @@ import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
-from th2etl.helpers.api_auth import exiger_cle_api
+from th2etl.helpers.api_auth import require_api_key
 
-RACINE = Path(__file__).resolve().parents[1]
-MAIN = RACINE / "src" / "th2etl" / "main.py"
+ROOT = Path(__file__).resolve().parents[1]
+MAIN = ROOT / "src" / "th2etl" / "main.py"
 
-# Les routes metier : celles qui listent, declenchent et modifient.
-ROUTEURS_PROTEGES = ["blocs", "pipelines", "triggers", "schedulers", "runs"]
+# The business routes: those that list, trigger, and modify.
+PROTECTED_ROUTERS = ["blocs", "pipelines", "triggers", "schedulers", "runs"]
 
 
 @pytest.fixture
-def app_avec_cle(monkeypatch):
-    """Fabrique une app portant la meme dependance que l'API reelle.
+def app_with_key(monkeypatch):
+    """Build an app carrying the same dependency as the real API.
 
-    monkeypatch et non une substitution a la main : la version precedente de ce
-    fichier remplacait get_settings dans le module d'authentification sans le
-    restaurer, et faisait tomber 17 tests des autres fichiers.
+    monkeypatch, not a manual substitution: the previous version of this
+    file replaced get_settings in the authentication module without
+    restoring it, and made 17 tests in other files fail.
     """
 
-    def _fabrique(cle):
-        class Faux:
-            api_key = cle
+    def _build(key):
+        class Fake:
+            api_key = key
 
-        monkeypatch.setattr("th2etl.helpers.api_auth.get_settings", lambda: Faux())
+        monkeypatch.setattr("th2etl.helpers.api_auth.get_settings", lambda: Fake())
 
         app = FastAPI()
 
-        @app.get("/protege", dependencies=[Depends(exiger_cle_api)])
-        def protege():
+        @app.get("/protected", dependencies=[Depends(require_api_key)])
+        def protected():
             return {"ok": True}
 
         @app.get("/health")
@@ -44,67 +44,68 @@ def app_avec_cle(monkeypatch):
 
         return TestClient(app, raise_server_exceptions=False)
 
-    return _fabrique
+    return _build
 
 
-def test_sans_cle_la_route_metier_est_refusee(app_avec_cle):
-    client = app_avec_cle("secret-attendu")
-    assert client.get("/protege").status_code == 401
+def test_without_key_the_business_route_is_refused(app_with_key):
+    client = app_with_key("expected-secret")
+    assert client.get("/protected").status_code == 401
 
 
-def test_mauvaise_cle_refusee(app_avec_cle):
-    client = app_avec_cle("secret-attendu")
-    r = client.get("/protege", headers={"Authorization": "Bearer mauvaise"})
+def test_wrong_key_refused(app_with_key):
+    client = app_with_key("expected-secret")
+    r = client.get("/protected", headers={"Authorization": "Bearer wrong"})
     assert r.status_code == 401
 
 
-def test_schema_autre_que_bearer_refuse(app_avec_cle):
-    client = app_avec_cle("secret-attendu")
-    r = client.get("/protege", headers={"Authorization": "Basic secret-attendu"})
+def test_scheme_other_than_bearer_refused(app_with_key):
+    client = app_with_key("expected-secret")
+    r = client.get("/protected", headers={"Authorization": "Basic expected-secret"})
     assert r.status_code == 401
 
 
-def test_bonne_cle_acceptee(app_avec_cle):
-    client = app_avec_cle("secret-attendu")
-    r = client.get("/protege", headers={"Authorization": "Bearer secret-attendu"})
+def test_correct_key_accepted(app_with_key):
+    client = app_with_key("expected-secret")
+    r = client.get("/protected", headers={"Authorization": "Bearer expected-secret"})
     assert r.status_code == 200
 
 
-def test_cle_vide_ferme_le_service_au_lieu_de_louvrir(app_avec_cle):
-    """Le piege : `api_key: str` accepte "" et ouvrirait tout en silence."""
-    client = app_avec_cle("")
-    r = client.get("/protege", headers={"Authorization": "Bearer nimporte"})
-    assert r.status_code == 503, "une cle vide doit fermer le service, jamais l'ouvrir"
+def test_empty_key_closes_the_service_instead_of_opening_it(app_with_key):
+    """The trap: `api_key: str` accepts "" and would silently open everything."""
+    client = app_with_key("")
+    r = client.get("/protected", headers={"Authorization": "Bearer whatever"})
+    assert r.status_code == 503, "an empty key must close the service, never open it"
 
 
-def test_health_reste_ouverte(app_avec_cle):
-    client = app_avec_cle("secret-attendu")
+def test_health_stays_open(app_with_key):
+    client = app_with_key("expected-secret")
     assert client.get("/health").status_code == 200
 
 
-@pytest.mark.parametrize("routeur", ROUTEURS_PROTEGES)
-def test_chaque_routeur_metier_porte_la_dependance(routeur):
-    """Anti-regression : un routeur monte sans garde fait echouer les tests.
+@pytest.mark.parametrize("router", PROTECTED_ROUTERS)
+def test_each_business_router_carries_the_dependency(router):
+    """Anti-regression: a router mounted without a guard fails the tests.
 
-    On relit la source de main.py plutot que l'objet app : inspecter l'app ne
-    dirait pas si une garde a ete retiree d'un seul routeur.
+    We re-read the source of main.py rather than the app object: inspecting
+    the app would not reveal whether a guard was removed from a single
+    router.
     """
-    arbre = ast.parse(MAIN.read_text(encoding="utf-8"))
-    sans_garde = []
+    tree = ast.parse(MAIN.read_text(encoding="utf-8"))
+    unguarded = []
 
-    for noeud in ast.walk(arbre):
-        if not isinstance(noeud, ast.Call):
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
             continue
-        f = noeud.func
+        f = node.func
         if not (isinstance(f, ast.Attribute) and f.attr == "include_router"):
             continue
-        if not noeud.args:
+        if not node.args:
             continue
-        premier = noeud.args[0]
-        nom = premier.value.id if isinstance(premier, ast.Attribute) else None
-        if nom != routeur:
+        first = node.args[0]
+        name = first.value.id if isinstance(first, ast.Attribute) else None
+        if name != router:
             continue
-        if not any(k.arg == "dependencies" for k in noeud.keywords):
-            sans_garde.append(nom)
+        if not any(k.arg == "dependencies" for k in node.keywords):
+            unguarded.append(name)
 
-    assert not sans_garde, f"routeur monte sans authentification : {sans_garde}"
+    assert not unguarded, f"router mounted without authentication: {unguarded}"

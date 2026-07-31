@@ -8,7 +8,7 @@ os.environ.setdefault("DATABASE_USER", "testuser")
 os.environ.setdefault("DATABASE_PASSWORD", "testpass")
 os.environ.setdefault("API_KEY", "test-api-key")
 
-# Les routes metier exigent desormais la cle d'API. Les tests qui les appellent
-# la presentent via cet en-tete ; ceux qui verifient le refus s'en passent
-# volontairement.
-EN_TETE_AUTH = {"Authorization": f"Bearer {os.environ['API_KEY']}"}
+# Business routes now require the API key. Tests that call them present
+# it via this header; tests that verify the refusal deliberately omit
+# it.
+AUTH_HEADER = {"Authorization": f"Bearer {os.environ['API_KEY']}"}

@@ -10,7 +10,7 @@ from datetime import datetime
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import EN_TETE_AUTH
+from conftest import AUTH_HEADER
 
 from th2etl.main import app, get_db as main_get_db
 from th2etl.routers.pipelines import get_db as router_get_db
@@ -78,7 +78,7 @@ def client(fake: FakeStorage, monkeypatch):
     )
     app.dependency_overrides[main_get_db] = lambda: fake
     app.dependency_overrides[router_get_db] = lambda: fake
-    c = TestClient(app, headers=EN_TETE_AUTH)
+    c = TestClient(app, headers=AUTH_HEADER)
     c.scheduled_calls = calls  # type: ignore[attr-defined]
     yield c
     app.dependency_overrides.clear()
