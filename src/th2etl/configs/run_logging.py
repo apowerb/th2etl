@@ -132,6 +132,58 @@ class EventOnlyFilter(logging.Filter):
         return hasattr(record, "event")
 
 
+# Record attributes that are NOT structured run fields: the LogRecord machinery
+# plus the columns the handler promotes to their own DB columns. Everything else
+# on the record (stage/bloc/agent_id/duration_ms/http_status/...) lands in the
+# ``fields`` JSONB so a new event field needs no schema change.
+_HANDLER_RESERVED: frozenset[str] = (
+    frozenset(logging.makeLogRecord({}).__dict__)
+    | frozenset({"message", "asctime", "event", "run_id"})
+)
+
+
+class RunLogHandler(logging.Handler):
+    """Persist structured run events to a queryable store, one row per event.
+
+    Only records that carry BOTH an ``event`` (emitted via :func:`log_event`)
+    and a ``run_id`` (bound in the ambient context and injected by
+    :class:`RunContextFilter`) are persisted — a log with no ``run_id`` cannot be
+    correlated to a run. The actual write is an injected callable, so the handler
+    is unit-testable without a database. It is fault-tolerant: a write failure is
+    routed through :meth:`handleError` and never propagates, so a saturated or
+    unreachable log store can never break a running pipeline.
+    """
+
+    def __init__(self, write: Any, level: int = logging.NOTSET) -> None:
+        super().__init__(level)
+        self._write = write  # callable(row: dict) -> None
+
+    def emit(self, record: logging.LogRecord) -> None:
+        run_id = getattr(record, "run_id", None)
+        if run_id is None or not getattr(record, "event", None):
+            return
+        try:
+            self._write(self._row(record, run_id))
+        except Exception:  # noqa: BLE001 - logging must never crash the caller
+            self.handleError(record)
+
+    @staticmethod
+    def _row(record: logging.LogRecord, run_id: Any) -> dict[str, Any]:
+        fields = {
+            key: value
+            for key, value in record.__dict__.items()
+            if key not in _HANDLER_RESERVED and not key.startswith("_")
+        }
+        return {
+            "run_id": run_id,
+            "ts": datetime.fromtimestamp(record.created, tz=timezone.utc),
+            "level": record.levelname,
+            "event": record.event,
+            "message": record.getMessage(),
+            "fields": fields,
+        }
+
+
 def log_event(
     logger: logging.Logger,
     event: str,

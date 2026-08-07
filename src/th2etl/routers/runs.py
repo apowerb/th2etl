@@ -34,6 +34,17 @@ def get_run(run_id: int, db: DatabaseStorage = Depends(get_db)):
     return public_run(run)
 
 
+@router.get("/{run_id}/logs")
+def get_run_logs(run_id: int, limit: int = 500, db: DatabaseStorage = Depends(get_db)):
+    """Return a run's structured execution log (events in order, oldest first) so
+    the UI can surface the *flow* — worker started, each bloc, HTTP calls, status
+    transitions — not just the terminal status. Safe to read: events carry no
+    run variables (secrets), only lifecycle fields."""
+    if db.get_pipeline_run(run_id) is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Run not found")
+    return [asdict(log) for log in db.list_run_logs(run_id, limit=limit)]
+
+
 @router.post("/{run_id}/cancel")
 def cancel_run(run_id: int, db: DatabaseStorage = Depends(get_db)):
     """Best-effort cancel: mark a non-terminal run as cancelled (the background

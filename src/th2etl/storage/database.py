@@ -20,6 +20,14 @@ logger = logging.getLogger(__name__)
 MIGRATION_LOCK_TIMEOUT = "3s"
 
 
+def qualified_table_name(table: str, schema: str | None) -> str:
+    """Schema-qualified table name with the ``etl_`` prefix. Single source of the
+    naming convention, shared by DatabaseStorage and the run-log writer so the
+    two can never drift."""
+    prefixed_table = f"etl_{table}"
+    return f"{schema}.{prefixed_table}" if schema else prefixed_table
+
+
 class RunStatus(str, Enum):
     """Lifecycle states of a pipeline run."""
 
@@ -91,6 +99,17 @@ class RunRecord:
     finished_at: str | None
 
 
+@dataclass
+class RunLogRecord:
+    id: int | None
+    run_id: int
+    ts: str
+    level: str
+    event: str
+    message: str | None
+    fields: dict[str, Any]
+
+
 class DatabaseStorage:
     def __init__(self, dsn: str | None = None, settings: Settings | None = None) -> None:
         if settings is not None:
@@ -115,10 +134,7 @@ class DatabaseStorage:
 
     def _table_name(self, table: str) -> str:
         """Return schema-qualified table name with etl_ prefix if schema is set."""
-        prefixed_table = f"etl_{table}"
-        if self.schema:
-            return f"{self.schema}.{prefixed_table}"
-        return prefixed_table
+        return qualified_table_name(table, self.schema)
 
     def add_trigger_change_listener(self, listener: Callable[[TriggerRecord], None]) -> None:
         self._trigger_listeners.append(listener)
@@ -158,6 +174,8 @@ class DatabaseStorage:
         schedulers_table = self._table_name("schedulers")
         runs_table = self._table_name("pipeline_runs")
         runs_index = runs_table.replace(".", "_")
+        run_logs_table = self._table_name("pipeline_run_logs")
+        run_logs_index = run_logs_table.replace(".", "_")
 
         with self.connection.cursor() as cur:
             cur.execute(
@@ -220,6 +238,19 @@ class DatabaseStorage:
 
                 CREATE INDEX IF NOT EXISTS ix_{runs_index}_pipeline_name
                     ON {runs_table}(pipeline_name);
+
+                CREATE TABLE IF NOT EXISTS {run_logs_table} (
+                    id SERIAL PRIMARY KEY,
+                    run_id INTEGER NOT NULL,
+                    ts TIMESTAMPTZ NOT NULL,
+                    level TEXT NOT NULL,
+                    event TEXT NOT NULL,
+                    message TEXT,
+                    fields JSONB NOT NULL DEFAULT '{{}}'
+                );
+
+                CREATE INDEX IF NOT EXISTS ix_{run_logs_index}_run_id
+                    ON {run_logs_table}(run_id);
                 """
             )
         self.connection.commit()
@@ -409,6 +440,27 @@ class DatabaseStorage:
             (scheduler_name, limit),
         )
         return [self._row_to_run(row) for row in rows]
+
+    def _row_to_run_log(self, row: dict[str, Any]) -> RunLogRecord:
+        return RunLogRecord(
+            id=row["id"],
+            run_id=row["run_id"],
+            ts=row["ts"].isoformat() if row["ts"] else "",
+            level=row["level"],
+            event=row["event"],
+            message=row["message"],
+            fields=row.get("fields") or {},
+        )
+
+    def list_run_logs(self, run_id: int, limit: int = 500) -> list[RunLogRecord]:
+        """Return a run's structured events in execution order (oldest first).
+        Read-only and bounded by ``limit`` so it stays a cheap, indexed lookup."""
+        run_logs_table = self._table_name("pipeline_run_logs")
+        rows = self._query_all(
+            f"SELECT * FROM {run_logs_table} WHERE run_id = %s ORDER BY id ASC LIMIT %s",
+            (run_id, limit),
+        )
+        return [self._row_to_run_log(row) for row in rows]
 
     def cancel_pipeline_run(self, run_id: int) -> RunRecord | None:
         """Best-effort cancel: atomically mark a NON-terminal run as cancelled.
