@@ -7,6 +7,7 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from th2etl.helpers.api_auth import require_api_key
 from th2etl.routers import blocs, pipelines, runs, schedulers, triggers
 from th2etl.storage import DatabaseStorage
+from th2etl.configs.logger import setup_logging
 from th2etl.configs.settings import get_settings
 from th2etl.scheduler.helpers import load_scheduler_manager
 
@@ -15,6 +16,10 @@ app_state = {}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Handles startup and shutdown events for the FastAPI application."""
+    # Before anything else: the deployed API is started as
+    # uvicorn th2etl.main:app, which never goes through runner.main().
+    # Without this call nothing configures the run logging on the servers.
+    setup_logging()
     print("Starting up the application and the background scheduler...")
     
     settings = get_settings()
