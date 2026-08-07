@@ -31,6 +31,14 @@ dependencies = [
     "uvicorn>=0.30.0",
     "passlib>=1.7.4",
     "pypdf>=4.0.0",
+    # The storage layer imports psycopg directly (src/th2etl/storage/database.py)
+    # and always has, but nothing declared it. The running deployments only have
+    # it because it was installed by hand; a fresh `uv sync` produced a venv that
+    # fails at import. Found on 2026-08-07 while preparing the SCEI install.
+    #
+    # [binary] ships the compiled libpq, so no host needs the postgres dev
+    # headers to build it.
+    "psycopg[binary]>=3.1,<4",
 ]
 
 [project.scripts]
