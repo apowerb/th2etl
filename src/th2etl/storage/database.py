@@ -11,6 +11,7 @@ import psycopg
 from psycopg.rows import dict_row
 
 from th2etl.configs.settings import Settings
+from th2etl.configs.run_logging import log_event
 
 logger = logging.getLogger(__name__)
 
@@ -377,7 +378,16 @@ class DatabaseStorage:
             ),
         )
         assert row is not None
-        return self._row_to_run(row)
+        run = self._row_to_run(row)
+        log_event(
+            logger,
+            "run.created",
+            run_id=run.id,
+            pipeline=pipeline_name,
+            scheduler_name=scheduler_name,
+            status=run.status,
+        )
+        return run
 
     def get_pipeline_run(self, run_id: int) -> RunRecord | None:
         runs_table = self._table_name("pipeline_runs")
@@ -470,7 +480,19 @@ class DatabaseStorage:
             if where_status is not None:
                 return None  # guard didn't match (already terminal/cancelled)
             raise ValueError(f"Pipeline run {run_id!r} does not exist")
-        return self._row_to_run(row)
+        updated = self._row_to_run(row)
+        # Single choke point for every status transition — logging here means no
+        # transition can happen silently, whichever caller drove it.
+        if status is not None:
+            log_event(
+                logger,
+                "run.status_changed",
+                run_id=run_id,
+                pipeline=updated.pipeline_name,
+                to_status=status,
+                error=error,
+            )
+        return updated
 
     def _query_one(self, query: str, params: tuple[Any, ...] = ()) -> dict[str, Any] | None:
         with self.connection.cursor() as cur:

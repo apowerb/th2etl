@@ -10,6 +10,8 @@ from th2etl.pipelines.context import RunContext
 
 
 class _Resp:
+    status_code = 200
+
     def raise_for_status(self):
         return None
 
@@ -21,8 +23,8 @@ class _Resp:
 def captured(monkeypatch) -> dict:
     cap: dict = {}
 
-    def fake_post(url, headers=None, json=None):
-        cap.update(url=url, headers=headers, payload=json)
+    def fake_post(url, headers=None, json=None, timeout=None):
+        cap.update(url=url, headers=headers, payload=json, timeout=timeout)
         return _Resp()
 
     monkeypatch.setattr(tr.requests, "post", fake_post)
@@ -37,6 +39,31 @@ def test_jwt_from_run_variables_sent_as_bearer(captured):
     assert captured["headers"]["Authorization"] == "Bearer TOK"
     assert captured["payload"] == {"agent_id": "42", "data": {"x": 1}}
     assert ctx.context_vars["a_result"]["ok"] is True
+
+
+def test_http_call_uses_timeout_and_logs_event(captured, caplog):
+    """Blind spot #4: without a timeout, a hung th2agent leaves the run
+    'running' forever. The bloc must pass http_timeout AND log bloc.http_call."""
+    bloc = RunAdkFromJwtBloc("a", {"base_url": "https://x", "http_timeout": 7.5})
+    with caplog.at_level("INFO", logger="th2etl.blocs.transformers"):
+        bloc.execute(RunContext(context_vars={"jwt_token": "TOK"}))
+    assert captured["timeout"] == 7.5
+    evt = [r for r in caplog.records if getattr(r, "event", None) == "bloc.http_call"]
+    assert evt and evt[-1].http_status == 200 and evt[-1].bloc == "a"
+
+
+def test_post_helper_logs_error_level_on_http_error_status(monkeypatch, caplog):
+    """A 4xx/5xx returned normally by requests (no exception) must still be an
+    ERROR-level bloc.http_call, else it's invisible when filtering by level."""
+    class _R:
+        status_code = 503
+
+    monkeypatch.setattr(tr.requests, "post", lambda url, timeout=None, **k: _R())
+    with caplog.at_level("INFO", logger="th2etl.blocs.transformers"):
+        tr._post("b", "https://x", timeout=5)
+    evt = [r for r in caplog.records if getattr(r, "event", None) == "bloc.http_call"][-1]
+    assert evt.levelname == "ERROR"
+    assert evt.http_status == 503
 
 
 def test_config_fallback_for_jwt(captured):
@@ -55,6 +82,7 @@ def test_missing_jwt_raises(captured):
 def test_http_error_propagates_without_setting_result(monkeypatch):
     class _ErrResp:
         response = None
+        status_code = 500
 
         def raise_for_status(self):
             raise tr.requests.exceptions.RequestException("boom")
@@ -62,7 +90,7 @@ def test_http_error_propagates_without_setting_result(monkeypatch):
         def json(self):
             return {}
 
-    monkeypatch.setattr(tr.requests, "post", lambda url, headers=None, json=None: _ErrResp())
+    monkeypatch.setattr(tr.requests, "post", lambda url, headers=None, json=None, timeout=None: _ErrResp())
     ctx = RunContext(context_vars={"jwt_token": "TOK"})
     with pytest.raises(tr.requests.exceptions.RequestException):
         RunAdkFromJwtBloc("a", {"base_url": "https://x"}).execute(ctx)

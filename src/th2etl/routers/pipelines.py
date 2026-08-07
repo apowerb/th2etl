@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 
 from th2etl.storage import DatabaseStorage
 from th2etl.configs.settings import get_settings
+from th2etl.configs.run_logging import log_event
 from th2etl.pipelines.runner import execute_pipeline_run
 from th2etl.schemas.pipelines import (
     PipelineCreateModel,
@@ -12,6 +15,7 @@ from th2etl.schemas.pipelines import (
 )
 
 router = APIRouter()
+logger = logging.getLogger("th2etl.api")
 
 def get_db():
     settings = get_settings()
@@ -86,6 +90,10 @@ def run_pipeline(
 
     run = db.create_pipeline_run(pipeline_name=name, variables=request.variables)
     background_tasks.add_task(execute_pipeline_run, run.id, name, request.variables)
+    # Marks the hand-off to the (non-durable) background task. If no
+    # 'run.worker_started' follows for this run_id, the task never ran and the
+    # run is stuck 'pending' (blind spot #1).
+    log_event(logger, "run.scheduled_background", run_id=run.id, pipeline=name, source="api")
     return {"run_id": run.id, "pipeline_name": name, "status": run.status}
 
 

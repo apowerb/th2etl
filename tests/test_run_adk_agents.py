@@ -10,6 +10,8 @@ from th2etl.pipelines.context import RunContext
 
 
 class _Resp:
+    status_code = 200
+
     def raise_for_status(self):
         return None
 
@@ -21,8 +23,8 @@ class _Resp:
 def captured(monkeypatch) -> dict:
     cap: dict = {}
 
-    def fake_post(url, headers=None, json=None):
-        cap.update(url=url, headers=headers, payload=json)
+    def fake_post(url, headers=None, json=None, timeout=None):
+        cap.update(url=url, headers=headers, payload=json, timeout=timeout)
         return _Resp()
 
     monkeypatch.setattr(tr.requests, "post", fake_post)

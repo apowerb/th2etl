@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 
 from th2etl.configs.settings import get_settings
+from th2etl.configs.run_logging import EventOnlyFilter, JsonFormatter, RunContextFilter
 
 # A list of the main modules to create separate log files for
 LOGGING_MODULES = [
@@ -12,6 +13,7 @@ LOGGING_MODULES = [
     "th2etl.api",
     "th2etl.pipelines",
     "th2etl.storage",
+    "th2etl.blocs",
 ]
 
 def setup_logging():
@@ -20,16 +22,37 @@ def setup_logging():
     log_format = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
     formatter = logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
 
+    # Injects the ambient run context (run_id/pipeline/...) onto every record so
+    # both text and JSON handlers can surface it, including from worker threads.
+    run_context_filter = RunContextFilter()
+
+    # A single JSON handler streams every run-lifecycle event as one object per
+    # line. Shared across root + module loggers (module loggers set
+    # propagate=False, so they need the handler attached directly).
+    json_handler = None
+    if settings.run_log_json and settings.log_dir:
+        Path(settings.log_dir).mkdir(parents=True, exist_ok=True)
+        json_handler = logging.FileHandler(Path(settings.log_dir) / settings.run_log_file)
+        json_handler.setFormatter(JsonFormatter())
+        json_handler.addFilter(run_context_filter)
+        # Keep runs.jsonl a pure structured-event stream: only records emitted
+        # via log_event() (carrying an 'event' attr) — no third-party or
+        # free-text logs (which may embed response bodies/tokens).
+        json_handler.addFilter(EventOnlyFilter())
+
     # --- Root logger for console output ---
     root_logger = logging.getLogger()
     # Clear any existing handlers to avoid duplicates
     if root_logger.hasHandlers():
         root_logger.handlers.clear()
-        
+
     stream_handler = logging.StreamHandler(sys.stdout)
     stream_handler.setFormatter(formatter)
+    stream_handler.addFilter(run_context_filter)
     root_logger.addHandler(stream_handler)
-    
+    if json_handler is not None:
+        root_logger.addHandler(json_handler)
+
     # --- File-based logging ---
     if settings.log_dir:
         log_dir = Path(settings.log_dir)
@@ -40,15 +63,22 @@ def setup_logging():
         main_log_file = log_dir / "th2etl.log"
         main_file_handler = logging.FileHandler(main_log_file)
         main_file_handler.setFormatter(formatter)
+        main_file_handler.addFilter(run_context_filter)
         root_logger.addHandler(main_file_handler)
 
         # Create separate log files for each main module
         for module_name in LOGGING_MODULES:
             module_logger = logging.getLogger(module_name)
+            # Clear first so a second setup_logging() call (tests, dev reload)
+            # does not accumulate duplicate handlers -> duplicate JSON lines.
+            module_logger.handlers.clear()
             log_file = log_dir / f"{module_name.split('.')[-1]}.log"
             file_handler = logging.FileHandler(log_file)
             file_handler.setFormatter(formatter)
+            file_handler.addFilter(run_context_filter)
             module_logger.addHandler(file_handler)
+            if json_handler is not None:
+                module_logger.addHandler(json_handler)
             module_logger.propagate = False # Prevents messages from going to the root logger's file handler
 
     # --- Set log levels ---

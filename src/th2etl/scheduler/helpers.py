@@ -12,6 +12,7 @@ from th2etl.pipelines.pipeline import Pipeline, build_pipeline_from_database
 from th2etl.pipelines.context import RunContext
 from th2etl.storage import DatabaseStorage, SchedulerRecord, TriggerRecord
 from th2etl.storage.database import RunStatus
+from th2etl.configs.run_logging import bind_run_context, log_event, reset_run_context
 from th2etl.configs.settings import Settings, get_settings
 
 logger = logging.getLogger(__name__)
@@ -153,17 +154,34 @@ class CronScheduler:
         )
 
         run_id = self._begin_tracked_run(start_at)
+        token = bind_run_context(
+            run_id=run_id,
+            scheduler_name=self.name,
+            pipeline=self.pipeline_name or self.name,
+            source="scheduler",
+        )
+        log_event(logger, "run.scheduler_fired", run_id=run_id, scheduler_name=self.name)
 
         try:
             self.pipeline.execute(run_context)
             duration = (datetime.now() - start_at).total_seconds()
             logger.info("Successfully finished pipeline '%s' in %.2f seconds", self.name, duration)
             self._finish_tracked_run(run_id, RunStatus.SUCCESS.value)
+            log_event(logger, "run.scheduler_succeeded", run_id=run_id, duration_ms=round(duration * 1000))
         except Exception as exc:
             duration = (datetime.now() - start_at).total_seconds()
             logger.exception("Pipeline '%s' failed after %.2f seconds", self.name, duration)
             self._finish_tracked_run(run_id, RunStatus.FAILED.value, error=str(exc))
+            log_event(
+                logger,
+                "run.scheduler_failed",
+                level=logging.ERROR,
+                run_id=run_id,
+                error=str(exc),
+                duration_ms=round(duration * 1000),
+            )
         finally:
+            reset_run_context(token)
             # Always schedule the next run, even if the pipeline failed
             self._next_run = self.trigger.next_run(start_at + timedelta(minutes=1))
 
@@ -182,8 +200,18 @@ class CronScheduler:
                 run.id, status=RunStatus.RUNNING.value, started_at=start_at.isoformat()
             )
             return run.id
-        except Exception:
+        except Exception as exc:
             logger.exception("Could not record run for scheduler '%s'", self.name)
+            # Explicit blind-spot #3 marker: if create() succeeded but the
+            # RUNNING transition failed, a row is left 'pending' and this run
+            # proceeds untracked (finish becomes a no-op).
+            log_event(
+                logger,
+                "run.tracking_failed",
+                level=logging.ERROR,
+                scheduler_name=self.name,
+                error=str(exc),
+            )
             return None
 
     def _finish_tracked_run(self, run_id: int | None, status: str, error: str | None = None) -> None:
