@@ -14,6 +14,10 @@ from th2etl.configs.settings import Settings
 
 logger = logging.getLogger(__name__)
 
+# How long a migration may wait for its ACCESS EXCLUSIVE lock before giving
+# up. Short on purpose: while it waits, every later reader waits too.
+MIGRATION_LOCK_TIMEOUT = "3s"
+
 
 class RunStatus(str, Enum):
     """Lifecycle states of a pipeline run."""
@@ -226,19 +230,45 @@ class DatabaseStorage:
     _migrated: bool = False
 
     def _apply_migrations(self, schedulers_table: str) -> None:
+        """Bring a pre-existing database up to the current column set.
+
+        Every column added here is also declared in the CREATE TABLE above, so
+        a fresh database is already correct and these statements are no-ops.
+        They exist only for databases created before those columns landed.
+
+        The wait for the lock is bounded, and that is the point. `ALTER TABLE
+        ... ADD COLUMN IF NOT EXISTS` still takes an ACCESS EXCLUSIVE lock when
+        the column is already there, and a request queued behind a long
+        transaction blocks every reader that arrives after it — Postgres grants
+        locks in order. On a database shared by several deployments that turns
+        a no-op into a stall: seeding production on 2026-08-07 queued behind an
+        idle-in-transaction session and froze `etl_schedulers` for ten minutes.
+
+        Giving up costs a retry on the next boot. Waiting costs the database.
+        """
         if DatabaseStorage._migrated:
             return
         runs_table = self._table_name("pipeline_runs")
-        with self.connection.cursor() as cur:
-            cur.execute(
-                f"ALTER TABLE {schedulers_table} ADD COLUMN IF NOT EXISTS variables JSONB NOT NULL DEFAULT '{{}}'"
+        statements = (
+            f"ALTER TABLE {schedulers_table} ADD COLUMN IF NOT EXISTS variables JSONB NOT NULL DEFAULT '{{}}'",
+            f"ALTER TABLE {schedulers_table} ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE",
+            f"ALTER TABLE {runs_table} ADD COLUMN IF NOT EXISTS scheduler_name TEXT",
+        )
+        try:
+            with self.connection.cursor() as cur:
+                cur.execute(f"SET LOCAL lock_timeout = '{MIGRATION_LOCK_TIMEOUT}'")
+                for statement in statements:
+                    cur.execute(statement)
+        except psycopg.errors.LockNotAvailable:
+            self.connection.rollback()
+            logger.warning(
+                "th2etl: column migrations skipped, no table lock within %s. A "
+                "fresh database already carries these columns from CREATE "
+                "TABLE; a legacy one retries on the next boot. Nothing is "
+                "blocked in the meantime.",
+                MIGRATION_LOCK_TIMEOUT,
             )
-            cur.execute(
-                f"ALTER TABLE {schedulers_table} ADD COLUMN IF NOT EXISTS active BOOLEAN NOT NULL DEFAULT TRUE"
-            )
-            cur.execute(
-                f"ALTER TABLE {runs_table} ADD COLUMN IF NOT EXISTS scheduler_name TEXT"
-            )
+            return
         self.connection.commit()
         DatabaseStorage._migrated = True
 

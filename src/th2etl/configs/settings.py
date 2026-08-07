@@ -30,6 +30,19 @@ class Settings(BaseSettings):
     log_level: str = Field("INFO", description="Global log level (DEBUG, INFO, WARNING, ERROR).")
     log_levels: str | None = Field(None, description="Fine-grained log levels (e.g., 'th2etl.scheduler:INFO,th2etl:WARNING').")
 
+    # Base URL of the apowerb API the ADK blocs call. The seed reads it to
+    # build each bloc's config, and it differs per deployment
+    # (api-agent-dev / api-agent / api-scei).
+    #
+    # Declared here rather than left to the environment because pydantic reads
+    # EVERY key of the .env file and this model forbids extras: an undeclared
+    # ADK_BASE_URL in .env makes the whole service refuse to start, which on
+    # 2026-08-07 left a production instance that would not have survived its
+    # next restart.
+    adk_base_url: str | None = Field(
+        None, description="Base URL of the apowerb API used by ADK blocs."
+    )
+
     api_key: str
 
     class Config:
