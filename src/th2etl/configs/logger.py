@@ -21,8 +21,29 @@ LOGGING_MODULES = [
     "th2etl.blocs",
 ]
 
-def setup_logging():
-    """Configures logging to separate files for each main module."""
+# Whether setup_logging() has already run in this process. The API and the
+# CLI runner both configure logging, and the second call would tear down the
+# handlers the first one built -- including the RunLogHandler, whose writer
+# holds its own database connection.
+_configured = False
+
+
+def setup_logging(force: bool = False):
+    """Configure logging for this process; a no-op once already configured.
+
+    Must be called by every entrypoint, not just the CLI runner: the deployed
+    API is started as uvicorn th2etl.main:app, which never goes through
+    runner.main(). Until 2026-08-07 that was the only caller, so on the
+    servers no run-logging was configured at all -- no JsonFormatter, no
+    RunContextFilter, no RunLogHandler. Runs succeeded and left nothing
+    behind. main.lifespan now calls this too.
+
+    Pass force=True to rebuild the handlers deliberately (tests).
+    """
+    global _configured
+    if _configured and not force:
+        return
+
     settings = get_settings()
     log_format = "%(asctime)s %(levelname)-8s %(name)s: %(message)s"
     formatter = logging.Formatter(log_format, datefmt="%Y-%m-%d %H:%M:%S")
@@ -124,3 +145,5 @@ def setup_logging():
                     logging.getLogger(logger_name.strip()).setLevel(level)
                 else:
                     logging.warning(f"Invalid log level '{level_name}' for logger '{logger_name.strip()}'")
+
+    _configured = True
