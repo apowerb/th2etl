@@ -4,15 +4,76 @@ on:
   release:
     types: [published]
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build and publish, e.g. 0.0.12"
+        required: true
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
+
+    services:
+      # Only used by the smoke test below, which needs a database to get past
+      # application startup. It is a FRESH database on every run, which is the
+      # state every first deployment is in and the only one in which the table
+      # creation path runs.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_PASSWORD: smoke
+          POSTGRES_USER: postgres
+          POSTGRES_DB: smoke
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Resolve the release version
+        id: release
+        shell: bash
+        env:
+          # Passed as env vars rather than interpolated into the script body,
+          # so a crafted tag name cannot inject shell commands here.
+          TAG_NAME: ${{ github.event.release.tag_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+        run: |
+          VERSION="${INPUT_VERSION:-${TAG_NAME#v}}"
+          # A non-version value would be stamped into the image and published
+          # as its identity. Fail here, saying why, rather than shipping it.
+          # [[ =~ ]] rather than grep: grep anchors per line, so a value with
+          # an embedded newline would slip through on its first line.
+          if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([abrc.dev+-][0-9A-Za-z.+-]*)?$ ]]; then
+            echo "::error::Resolved '${VERSION}' as the version, which is not a release version. Expected a tag like v0.0.12."
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      # The PyPI job rewrites pyproject.toml in flight so the wheel carries the
+      # tag. The image is built from the same source and needs the same
+      # treatment, or it reports the placeholder 0.0.1 under whatever tag it is
+      # published as -- and the smoke test below refuses exactly that.
+      - name: Stamp the release version into the source
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        run: .github/scripts/stamp-release-version.sh
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+        with:
+          cache-image: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -20,19 +81,38 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
 
-      - name: Extract metadata (tags, labels) for Docker
-        id: meta
-        uses: docker/metadata-action@v5
+      # Built for this runner's architecture only, and loaded rather than
+      # pushed, so the next step can actually run it. The multi-arch build
+      # below reuses these layers from cache, so this is not a second full
+      # build.
+      - name: Build image for the smoke test
+        uses: docker/build-push-action@v6
         with:
-          images: th2farid/th2etl
-          tags: |
-            # Create a Docker tag from the Git tag
-            type=semver,pattern={{version}}
+          context: .
+          load: true
+          platforms: linux/amd64
+          tags: th2etl:smoke
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+      # The step that was missing. Nothing here used to run the image it
+      # publishes, and on 2026-09-04 every published tag -- 0.0.8, 0.0.9,
+      # 0.0.10, 0.0.11 and latest -- exited 1 on a plain `docker run`.
+      - name: Smoke-test the image before publishing it
+        env:
+          IMAGE: th2etl:smoke
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+          DB_DSN_HOST: 127.0.0.1
+          DB_PORT: "5432"
+          DB_NAME: smoke
+          DB_USER: postgres
+          DB_PASSWORD: smoke
+        run: .github/scripts/smoke-test-image.sh
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            th2farid/th2etl:${{ steps.release.outputs.version }}
+            th2farid/th2etl:latest
