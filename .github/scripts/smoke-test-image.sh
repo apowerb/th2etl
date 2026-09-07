@@ -20,12 +20,27 @@
 # Required: IMAGE, EXPECTED_VERSION
 # Optional: DB_* (all of them) -- when set, the image is also started against
 #           that database and required to serve.
+#           HOST_PORT -- the host port the container is reached on. It runs
+#           with --network host, so this port is taken on the MACHINE running
+#           the script, not inside a container. The default is deliberately
+#           not 8000: that is apowerb's own default port, and squatting it on
+#           a developer machine either fails the test for the wrong reason or
+#           disturbs whatever was already there. A CI runner has neither
+#           problem, a laptop does.
 set -euo pipefail
 
 : "${IMAGE:?IMAGE is required}"
 : "${EXPECTED_VERSION:?EXPECTED_VERSION is required}"
 
 fail() { echo "::error::$*" >&2; exit 1; }
+
+HOST_PORT="${HOST_PORT:-18000}"
+
+# Generated, not the literal it used to be. `smoketoken` was harmless in a
+# runner and wrong everywhere else: with --network host the API below is
+# reachable on the machine running this script for as long as the test lasts,
+# and a key published in a public repository is not a key. One per run.
+SMOKE_KEY="$( (openssl rand -hex 16 2>/dev/null) || date +%s%N )"
 
 # 1. Everything the CMD imports resolves, offline, and the version matches the
 #    tag. `--network none` is the assertion, not decoration: it is what tells
@@ -56,13 +71,13 @@ container=$(docker run -d --network host \
   -e DATABASE_NAME="$DB_NAME" \
   -e DATABASE_USER="${DB_USER:-postgres}" \
   -e DATABASE_PASSWORD="${DB_PASSWORD:-smoke}" \
-  -e API_KEY=smoketoken \
-  "$IMAGE")
+  -e API_KEY="$SMOKE_KEY" \
+  "$IMAGE" python -m th2etl --serve-api --host 0.0.0.0 --port "$HOST_PORT")
 trap 'docker rm -f "$container" >/dev/null 2>&1 || true' EXIT
 
 served=""
 for attempt in $(seq 1 30); do
-  if code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8000/openapi.json) \
+  if code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:${HOST_PORT}/openapi.json) \
      && [ "$code" = "200" ]; then
     served="yes"
     echo "/openapi.json answered 200 (attempt ${attempt}/30)."
@@ -82,9 +97,9 @@ state=$(docker inspect -f '{{.State.Status}}' "$container")
 #    anyone who can reach it. Both directions, so "it crashed" cannot pass for
 #    "it refused".
 echo "--- refuses a business route without the API key ---"
-unauth=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8000/schedulers/)
+unauth=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:${HOST_PORT}/schedulers/)
 [ "$unauth" = "401" ] || fail "GET /schedulers/ answered ${unauth} without a key, expected 401"
 auth=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 \
-  -H "Authorization: Bearer smoketoken" http://127.0.0.1:8000/schedulers/)
+  -H "Authorization: Bearer $SMOKE_KEY" http://127.0.0.1:${HOST_PORT}/schedulers/)
 [ "$auth" = "200" ] || fail "GET /schedulers/ answered ${auth} with the right key, expected 200"
 echo "401 without the key, 200 with it."
