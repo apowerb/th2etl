@@ -1,0 +1,99 @@
+name: Tests
+
+# The gap this closes: the repository had no CI on pull requests at all. Its
+# two workflows only build the image and publish the wheel, both on release,
+# so the 17 test files never ran anywhere but on a developer's machine -- and
+# apowerb/th2etl#1 lists "minimal pytest suite green in CI" as an acceptance
+# criterion that was still open on 2026-09-08.
+#
+# This matters here more than the count of tests suggests. The review of #4
+# found that PostgresExporterBloc used engine.connect(), which ROLLS BACK on
+# close in SQLAlchemy 2.x, so every to_sql() write was silently dropped; the
+# regression test that now pins engine.begin() only protects the code while
+# something actually runs it.
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.10 is the floor declared by requires-python and what
+        # .python-version pins; 3.11 is what the published image runs on
+        # (Dockerfile's base is python:3.11-slim-bookworm). A failure that
+        # only appears on one of them is exactly what a single version hides.
+        python-version: ["3.10", "3.11"]
+
+    services:
+      # tests/test_storage.py connects to a real database, with its DSN
+      # written literally in the file:
+      #   postgresql://user:password@localhost:5432/testdb
+      # These credentials mirror that string deliberately, so the two
+      # integration tests run rather than error out. They are throwaway
+      # values for a container that lives one job.
+      #
+      # The database is fresh on every run, which the fixture relies on: it
+      # creates rows and never cleans them up ("we'll rely on a clean test
+      # database").
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: testdb
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Pinned to an exact version, not a moving major: astral-sh/setup-uv
+      # stopped publishing moving major tags after v7, so `@v10` does not
+      # resolve at all -- the first run of this workflow failed on
+      # "unable to find version `v10`". v10.0.1 is the current release.
+      - name: Install uv
+        uses: astral-sh/setup-uv@v10.0.1
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # -p on every uv call, and not only setup-uv's python-version. The
+      # repository pins .python-version to 3.10, and without an explicit
+      # choice uv obeys that file -- measured: `uv run` gives 3.10.20 with no
+      # UV_PYTHON set and 3.11.15 with it. Relying on the action to export
+      # that variable would make the 3.11 leg of the matrix silently test
+      # 3.10, which is worse than having no matrix: it would report coverage
+      # it does not have.
+      #
+      # --frozen so a run resolves uv.lock rather than drifting to whatever
+      # PyPI serves today: a green CI on dependencies nobody has pinned tells
+      # you very little. Both extras, for the same reason the image needs
+      # `postgres`: th2etl.blocs imports pandas at package import time, and
+      # `test` carries pytest and httpx.
+      - name: Install the project and its test dependencies
+        run: uv sync --frozen --extra test --extra postgres -p "${{ matrix.python-version }}"
+
+      - name: Run the test suite
+        run: uv run --frozen -p "${{ matrix.python-version }}" python -m pytest tests -v
+
+      # The matrix must actually be a matrix. Asserting it here rather than
+      # trusting the setup step keeps a silent regression to 3.10 visible.
+      - name: Confirm the interpreter under test
+        run: |
+          uv run --frozen -p "${{ matrix.python-version }}" python -c \
+            "import sys; v='.'.join(map(str, sys.version_info[:2])); \
+             assert v == '${{ matrix.python-version }}', f'ran on {v}'; \
+             print('tested on', sys.version.split()[0])"
