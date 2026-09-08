@@ -1,19 +1,36 @@
 name: Build and Push Docker Image
 
+# Same chain as apowerb/th2pulse: a published release runs "Upload Python
+# Package" (publish.yaml), and this workflow starts when that one has
+# succeeded, installs the wheel it just published and ships it as the image.
+# The image is therefore never ahead of, or different from, what PyPI serves
+# under the same version.
+#
+# workflow_run only fires for the workflow file on the default branch: this
+# file has no effect on a release until it is merged.
 on:
-  release:
-    types: [published]
+  workflow_run:
+    workflows: ["Upload Python Package"]
+    types: [completed]
+  # Republish an image for a release that is already on PyPI, e.g. after a
+  # Dockerfile-only fix, or dry-run this workflow on a branch before merging.
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to build and publish, e.g. 0.0.12"
+        description: "Release version already on PyPI to build and publish, e.g. 0.0.12"
         required: true
+      publish:
+        description: "Push the image to Docker Hub. Untick for a dry run that builds and smoke-tests only."
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
 
 jobs:
   build-and-push:
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
 
     services:
       # Only used by the smoke test below, which needs a database to get past
@@ -37,35 +54,61 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # On workflow_run the default checkout is the head of the default
+          # branch, not the released commit. Build the image of tag X from the
+          # Dockerfile and uv.lock of tag X. Empty on workflow_dispatch, which
+          # then checks out the ref the run was started on.
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: Resolve the release version
         id: release
         shell: bash
         env:
           # Passed as env vars rather than interpolated into the script body,
-          # so a crafted tag name cannot inject shell commands here.
-          TAG_NAME: ${{ github.event.release.tag_name }}
-          INPUT_VERSION: ${{ github.event.inputs.version }}
+          # so a crafted branch or tag name cannot inject shell commands here.
+          HEAD_BRANCH: ${{ github.event.workflow_run.head_branch }}
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
-          VERSION="${INPUT_VERSION:-${TAG_NAME#v}}"
-          # A non-version value would be stamped into the image and published
-          # as its identity. Fail here, saying why, rather than shipping it.
+          VERSION="${INPUT_VERSION:-${HEAD_BRANCH#v}}"
+          # head_branch is the only place a workflow_run can read the release
+          # tag from, and it is not guaranteed to be one: it can carry a
+          # branch name instead. That value decides what the image installs
+          # (TH2ETL_VERSION below), and a non-version would burn the 15-minute
+          # PyPI wait before failing. Fail here instead, saying why.
           # [[ =~ ]] rather than grep: grep anchors per line, so a value with
           # an embedded newline would slip through on its first line.
           if [[ ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+([abrc.dev+-][0-9A-Za-z.+-]*)?$ ]]; then
-            echo "::error::Resolved '${VERSION}' as the version, which is not a release version. Expected a tag like v0.0.12."
+            echo "::error::Resolved '${VERSION}' as the version, which is not a release version. Expected the publish workflow to have run from a tag like v0.0.12."
             exit 1
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      # The PyPI job rewrites pyproject.toml in flight so the wheel carries the
-      # tag. The image is built from the same source and needs the same
-      # treatment, or it reports the placeholder 0.0.1 under whatever tag it is
-      # published as -- and the smoke test below refuses exactly that.
-      - name: Stamp the release version into the source
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          # Same interpreter as the Dockerfile's base image, so the wait step
+          # below resolves against the same set of wheels the build will.
+          python-version: "3.11"
+
+      - name: Install uv
+        run: pip install uv
+
+      # This workflow starts as soon as "Upload Python Package" reports
+      # success, but PyPI's index takes some time to propagate a freshly
+      # published release. The Docker build below installs
+      # "th2etl[postgres]==${VERSION}" straight from PyPI, so building
+      # immediately is a race. This step runs the same resolution the
+      # Dockerfile runs, so it fails and succeeds under exactly the condition
+      # the real build depends on.
+      - name: Wait for the release to resolve on PyPI
+        shell: bash
         env:
-          VERSION: ${{ steps.release.outputs.version }}
-        run: .github/scripts/stamp-release-version.sh
+          # Same requirement string the Dockerfile installs, extras included,
+          # so this step resolves exactly what the build will.
+          PACKAGE_NAME: th2etl[postgres]
+          PACKAGE_VERSION: ${{ steps.release.outputs.version }}
+        run: .github/scripts/wait-for-pypi-release.sh
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -91,11 +134,13 @@ jobs:
           context: .
           load: true
           platforms: linux/amd64
+          build-args: |
+            TH2ETL_VERSION=${{ steps.release.outputs.version }}
           tags: th2etl:smoke
 
-      # The step that was missing. Nothing here used to run the image it
-      # publishes, and on 2026-09-04 every published tag -- 0.0.8, 0.0.9,
-      # 0.0.10, 0.0.11 and latest -- exited 1 on a plain `docker run`.
+      # Nothing here used to run the image it publishes, and on 2026-09-04
+      # every published tag -- 0.0.8, 0.0.9, 0.0.10, 0.0.11 and latest --
+      # exited 1 on a plain `docker run`.
       - name: Smoke-test the image before publishing it
         env:
           IMAGE: th2etl:smoke
@@ -107,12 +152,57 @@ jobs:
           DB_PASSWORD: smoke
         run: .github/scripts/smoke-test-image.sh
 
+      # linux/arm64 is published too, and until this step nothing ran it:
+      # the smoke build above is amd64-only because `load: true` takes a
+      # single platform. A dependency with no aarch64 wheel, falling back to
+      # a source build, or a psycopg/pandas that differs on arm64, would ship
+      # broken under a green run -- the exact class of defect the amd64 smoke
+      # test exists to catch. Emulated under QEMU, so this is the offline
+      # import-and-version assertion only: DB_NAME is left unset, which the
+      # smoke script reads as "skip the serving check".
+      - name: Build the arm64 image for its own smoke test
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          platforms: linux/arm64
+          build-args: |
+            TH2ETL_VERSION=${{ steps.release.outputs.version }}
+          tags: th2etl:smoke-arm64
+
+      - name: Smoke-test the arm64 image
+        env:
+          IMAGE: th2etl:smoke-arm64
+          EXPECTED_VERSION: ${{ steps.release.outputs.version }}
+        run: .github/scripts/smoke-test-image.sh
+
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
           context: .
-          push: true
+          # Always on workflow_run; on workflow_dispatch only when asked, so a
+          # branch can be dry-run end to end without publishing anything.
+          push: ${{ github.event_name == 'workflow_run' || inputs.publish }}
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            TH2ETL_VERSION=${{ steps.release.outputs.version }}
+          # apowerb/, matching this repository and apowerb/th2pulse. The
+          # previous images went to th2farid/, a personal namespace; David
+          # settled the question on 2026-09-08.
+          #
+          # NOT a cosmetic move: apowerb-hosting's compose defaults to
+          # th2farid/th2etl (lines 291 and 338) and pulls with
+          # `pull_policy: always`, so it keeps resolving the OLD namespace.
+          # Nothing breaks while it stays pinned to 0.0.12, which exists
+          # there -- but the first release published under this file leaves
+          # th2farid/ without that tag, and a missing image on an ACTIVE
+          # profile aborts the whole `up`, base services included. The
+          # compose defaults must follow, in that repository.
+          #
+          # :latest only for a real release. A workflow_dispatch of an older
+          # version -- rebuilding 0.0.9 on a patched base image, say -- would
+          # otherwise move :latest backwards, and every install that leaves
+          # TH2ETL_TAG unset would follow it down with no signal.
           tags: |
-            th2farid/th2etl:${{ steps.release.outputs.version }}
-            th2farid/th2etl:latest
+            apowerb/th2etl:${{ steps.release.outputs.version }}
+            ${{ github.event_name == 'workflow_run' && 'apowerb/th2etl:latest' || '' }}

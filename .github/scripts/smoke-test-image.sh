@@ -10,9 +10,8 @@
 # the build context copied no README.md while pyproject.toml declares one, so
 # that resolution failed anyway.
 #
-# Run it against a local build:
-#   VERSION=0.0.12 .github/scripts/stamp-release-version.sh
-#   docker build -t th2etl:smoke .
+# Run it against a local build of a version that is on PyPI:
+#   docker build --build-arg TH2ETL_VERSION=0.0.12 -t th2etl:smoke .
 #   IMAGE=th2etl:smoke EXPECTED_VERSION=0.0.12 \
 #     DB_DSN_HOST=127.0.0.1 DB_PORT=5432 DB_NAME=smoke DB_USER=postgres \
 #     DB_PASSWORD=smoke .github/scripts/smoke-test-image.sh
