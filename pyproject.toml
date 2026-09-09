@@ -3,6 +3,8 @@ name = "th2etl"
 version = "0.0.1"
 description = "A flexible ETL framework with a database-driven scheduler, extensible pipeline blocs, and a RESTful API."
 readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
 authors = [
     { name = "thaink2", email = "contact@thaink2.com" }
 ]
@@ -11,7 +13,7 @@ keywords = ["etl", "pipeline", "automation", "scheduler", "fastapi", "postgresql
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: Apache Software License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
