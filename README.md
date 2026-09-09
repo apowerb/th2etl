@@ -1,5 +1,5 @@
 [![PyPI version](https://badge.fury.io/py/th2etl.svg)](https://badge.fury.io/py/th2etl)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://www.apache.org/licenses/LICENSE-2.0)
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/th2etl)
 [![Build Status](https://github.com/thaink2/th2etl/actions/workflows/build.yaml/badge.svg)](https://github.com/thaink2/th2etl/actions/workflows/build.yaml)
 [![Publish Status](https://github.com/thaink2/th2etl/actions/workflows/publish.yaml/badge.svg)](https://github.com/thaink2/th2etl/actions/workflows/publish.yaml)
@@ -451,3 +451,11 @@ print(f"Created bloc: {new_bloc}")
 pipelines = client.list_pipelines()
 print(f"Found {len(pipelines)} pipelines.")
 ```
+
+## License
+
+th2etl is distributed under the [Apache License 2.0](./LICENSE).
+Copyright 2025-2026 thaink².
+
+"apowerb" and "thaink²" are trademarks of thaink². The licence covers the code,
+not the marks — see [TRADEMARK.md](https://github.com/apowerb/apowerb/blob/main/TRADEMARK.md).
