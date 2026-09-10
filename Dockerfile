@@ -52,6 +52,27 @@ RUN test -n "${TH2ETL_VERSION}" \
     || { echo "TH2ETL_VERSION build-arg is required, e.g. --build-arg TH2ETL_VERSION=0.0.12" >&2; exit 1; } \
     && uv pip install --no-cache-dir "th2etl[postgres]==${TH2ETL_VERSION}"
 
+# perl-base est un paquet Essential de l'image de base python:3.11-slim-trixie :
+# rien au-dessus ne le tire, et cette image n'installe aucun paquet systeme.
+# Il porte a lui seul les trois dernieres vulnerabilites critiques de l'image --
+# CVE-2026-13221, CVE-2026-42496, CVE-2026-8376 -- sans correctif publie pour
+# cette version de Debian. Un service Python pur ne l'execute jamais : le CMD
+# est `python -m th2etl`, et ni uv ni le paquet installe n'appellent perl.
+#
+# Consequence pour qui etend cette image (FROM apowerb/th2etl) : `apt-get
+# install` continue de fonctionner pour les paquets ordinaires -- dpkg et apt
+# n'ont pas besoin de perl -- et un paquet dont les scripts de maintenance sont
+# ecrits en Perl le reinstallera automatiquement comme n'importe quelle
+# dependance manquante. Aucun etat durablement casse : au pire une image
+# derivee un peu plus grosse.
+#
+# Le coeur apowerb applique la meme purge, avec la meme justification, et se
+# mesure a zero critique.
+RUN apt-get update \
+    && apt-get purge -y --allow-remove-essential perl-base \
+    && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
 EXPOSE 8000
 
 # Plain `python`, not `uv run`: `uv run` re-resolves the project environment on
