@@ -12,7 +12,7 @@
 # What this image must satisfy, and did not before 2026-09-04: `docker run` on
 # it starts the service. The environment is built HERE, once, and the CMD only
 # runs it.
-FROM python:3.11-slim-bookworm
+FROM python:3.11-slim-trixie
 
 # Release to install. The Docker workflow passes it as a build-arg, derived
 # from the git tag the PyPI workflow just published. There is deliberately no
