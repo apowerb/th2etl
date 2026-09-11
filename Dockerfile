@@ -94,6 +94,25 @@ RUN apt-get update \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
 
+# pip et setuptools ne servent jamais a l'execution : le service tourne dans
+# /opt/venv, construit par uv, qui n'en embarque aucun des deux. Les copies de
+# l'image de base vendorisent leur propre arbre de dependances sous
+# `setuptools/_vendor/`, et c'est CET arbre -- pas les dependances de
+# l'application -- que visent les avis `wheel` (CVE-2026-24049) et
+# `jaraco.context` (CVE-2026-23949) releves sur l'image. Les retirer les retire.
+#
+# Pour qui etend cette image : `pip` n'est plus la. Utiliser uv, deja present
+# dans /bin, ou lancer `python -m ensurepip` d'abord.
+#
+# Le coeur apowerb fait la meme chose (PR #137).
+RUN /usr/local/bin/python -m pip uninstall -y pip setuptools \
+    && rm -rf /usr/local/lib/python3.11/site-packages/pip* \
+              /usr/local/lib/python3.11/site-packages/setuptools* \
+              /usr/local/lib/python3.11/site-packages/pkg_resources \
+              /usr/local/lib/python3.11/site-packages/_distutils_hack \
+              /usr/local/lib/python3.11/site-packages/distutils-precedence.pth \
+              /usr/local/lib/python3.11/site-packages/wheel*
+
 EXPOSE 8000
 
 # Plain `python`, not `uv run`: `uv run` re-resolves the project environment on
