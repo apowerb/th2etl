@@ -35,7 +35,10 @@ jobs:
         uses: peter-evans/dockerhub-description@v4
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          # Ce depot nomme son secret DOCKERHUB_PASSWORD, la ou apowerb,
+          # apowerb-ui et th2pulse utilisent DOCKERHUB_TOKEN. Le repli
+          # accepte les deux plutot que d imposer un renommage.
+          password: ${{ secrets.DOCKERHUB_TOKEN || secrets.DOCKERHUB_PASSWORD }}
           repository: apowerb/th2etl
           readme-filepath: .github/DOCKERHUB.md
           short-description: ${{ github.event.repository.description }}
