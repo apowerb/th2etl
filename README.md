@@ -10,7 +10,7 @@
 [![PyPI version](https://img.shields.io/pypi/v/th2etl?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/th2etl/)
 [![Python](https://img.shields.io/badge/Python-3.12%20%7C%203.13-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Build](https://img.shields.io/github/actions/workflow/status/apowerb/th2etl/build.yaml?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/apowerb/th2etl/actions/workflows/build.yaml)
-[![License](https://img.shields.io/badge/License-Apache_2.0-green.svg?style=for-the-badge)](LICENSE)
+[![License](https://img.shields.io/badge/License-Apache_2.0-green.svg?style=for-the-badge)](https://github.com/apowerb/th2etl/blob/main/LICENSE)
 
 <p align="center">
   <a href="https://docs.apowerb.com/">Documentation</a> •
@@ -286,7 +286,7 @@ Create pipeline metadata from the command line and then start the ETL service.
 
 For detailed, hands-on examples of how to create different types of pipelines (sequential, parallel, multi-source), please see the example notebook:
 
-- [Pipeline Examples Notebook](examples/pipelines/full.ipynb)
+- [Pipeline Examples Notebook](https://github.com/apowerb/th2etl/blob/main/examples/pipelines/full.ipynb)
 
 ## Persistent Storage
 
@@ -470,7 +470,7 @@ print(f"Found {len(pipelines)} pipelines.")
 
 ## License
 
-th2etl is distributed under the [Apache License 2.0](./LICENSE).
+th2etl is distributed under the [Apache License 2.0](https://github.com/apowerb/th2etl/blob/main/LICENSE).
 Copyright 2025-2026 thaink².
 
 "apowerb" and "thaink²" are trademarks of thaink². The licence covers the code,
