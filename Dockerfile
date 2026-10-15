@@ -68,7 +68,11 @@ RUN test -n "${TH2ETL_VERSION}" \
 #
 # Le coeur apowerb applique la meme purge, avec la meme justification, et se
 # mesure a zero critique.
+# `apt-get upgrade` prend les correctifs de securite Debian publies apres la
+# derniere image de base (gzip, pcre2, sqlite, openssl releves le 15/10 sur
+# l'image du 11/09), au lieu d'attendre sa reconstruction.
 RUN apt-get update \
+    && apt-get upgrade -y \
     && apt-get purge -y --allow-remove-essential perl-base \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*
