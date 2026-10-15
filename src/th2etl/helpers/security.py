@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from typing import Optional, Dict
-from jose import JWTError, jwt
+import jwt
+from fastapi import HTTPException, status
+from jwt import PyJWTError as JWTError
 from passlib.context import CryptContext
 
 from th2etl.configs.settings import get_settings

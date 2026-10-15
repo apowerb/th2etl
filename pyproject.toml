@@ -27,12 +27,11 @@ dependencies = [
     "pydantic-settings>=2.12.0",
     "python-dotenv>=1.0.0",
     "requests>=2.31.0",
-    "pyjwt[crypto]>=2.8,<3.0",
-    "python-jose>=3.5.0",
+    "pyjwt[crypto]>=2.14,<3.0",
     "fastapi>=0.123.10",
     "uvicorn>=0.30.0",
     "passlib>=1.7.4",
-    "pypdf>=4.0.0",
+    "pypdf>=6.19.0",
     # The storage layer imports psycopg directly (src/th2etl/storage/database.py)
     # and always has, but nothing declared it. The running deployments only have
     # it because it was installed by hand; a fresh `uv sync` produced a venv that
