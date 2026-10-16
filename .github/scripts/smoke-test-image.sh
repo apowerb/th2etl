@@ -89,6 +89,10 @@ done
 # A container can be "running" with its API dead: the runner starts more than
 # one process, and one of them surviving keeps the container up while the
 # other is gone. Assert both, so that failure mode cannot pass.
+health=$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:${HOST_PORT}/health)
+[ "$health" = "200" ] || fail "/health answered ${health}, expected 200"
+echo "/health answered 200."
+
 state=$(docker inspect -f '{{.State.Status}}' "$container")
 [ "$state" = "running" ] || fail "the container is ${state} after serving; something exited"
 
