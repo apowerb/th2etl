@@ -31,7 +31,7 @@ dependencies = [
     "fastapi>=0.123.10",
     "uvicorn>=0.30.0",
     "passlib>=1.7.4",
-    "pypdf>=6.19.0",
+    "pypdf>=6.21.2",
     # The storage layer imports psycopg directly (src/th2etl/storage/database.py)
     # and always has, but nothing declared it. The running deployments only have
     # it because it was installed by hand; a fresh `uv sync` produced a venv that
