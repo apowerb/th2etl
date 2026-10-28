@@ -35,7 +35,7 @@ class Settings(BaseSettings):
 
     # Base URL of the apowerb API the ADK blocs call. The seed reads it to
     # build each bloc's config, and it differs per deployment
-    # (api-agent-dev / api-agent / api-scei).
+    # (one API host per environment and per client deployment).
     #
     # Declared here rather than left to the environment because pydantic reads
     # EVERY key of the .env file and this model forbids extras: an undeclared
